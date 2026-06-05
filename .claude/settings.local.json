@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\DEV\\\\claude\\\\olympus-router\" -Recurse -Name | Where-Object { $_ -notmatch \"node_modules\" })",
+      "PowerShell(Rename-Item *)",
+      "Bash(node *)",
+      "Bash(gh auth *)",
+      "PowerShell(gh auth *)",
+      "PowerShell($env:GITHUB_TOKEN; $env:GH_TOKEN 2>&1)",
+      "PowerShell(winget install *)",
+      "PowerShell(gh repo *)",
+      "Bash(git *)"
+    ]
+  }
+}
