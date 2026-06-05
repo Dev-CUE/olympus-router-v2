@@ -46,7 +46,7 @@ export function validateA2A(a2a, routing, payload, response) {
 
   // 7. 스푸핑 방지 (공통)
   const registryUrl = registry.getUrl(currentCaller);
-  if (payload._source_url && !payload._source_url.startsWith(registryUrl))
+  if (payload?._source_url && !payload?._source_url.startsWith(registryUrl))
     throw new A2AError('A2A_SPOOF_DETECTED');
 
   return counts;
