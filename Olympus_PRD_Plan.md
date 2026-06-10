@@ -1,9 +1,11 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.7 (다중 사용자 / 관리 UI 준비 설계 반영)
-> **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / 실제 에이전트 연동 진행 중
+> **버전**: v6.8 (VPS 이전 / push→pull 통신모델 전환 / 등록토큰 / /result 통일 / Stateless 완화)
+> **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / Phase 8~10 미구현
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
 > **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
+
+> ⚠️ **v6.8 확정 결정 번복 고지**: 본 버전은 이전까지 "확정/재논의 금지"로 잠겨 있던 결정 5건을 의도적으로 번복한다. 상세는 16절 참조. 하위 문서(CLAUDE.md, SKILLS.md, Dev_Enhancement_Olympus.md)는 본 버전 확정 후 정합화 대상이다(미반영 상태이면 본 PRD가 우선한다).
 
 ---
 
@@ -11,7 +13,7 @@
 
 당신은 Olympus Universal Architecture를 구현하는 코딩 에이전트다. 다음 불변 원칙을 위반하는 코드는 거부된다.
 
-1. **Dumb Pipe**: 라우터 코어는 텍스트를 파싱하지 않는다. 비즈니스 로직·LLM 호출·문자열 의도 분석 금지. 오직 JSON 엔벨롭의 목적지 검증과 병렬 패스스루만 수행한다.
+1. **Dumb Pipe**: 라우터 코어는 텍스트를 파싱하지 않는다. 비즈니스 로직·LLM 호출·문자열 의도 분석 금지. 오직 JSON 엔벨롭의 목적지 검증과 패스스루만 수행한다. (v6.8: "상태 0%"는 완화되었으나 "파싱·LLM·의도분석 금지"는 불변이다.)
 2. **Zero Hardcoding**: 코드 어디에도 `zeus` / `hera` / `athena` 같은 에이전트 이름을 직접 쓰지 않는다. 모든 에이전트는 `config/agents.yaml`에서만 정의되고 registry를 통해 동적 조회된다.
 3. **Stage-Gated**: Phase는 순서대로 구현한다. 각 Phase는 정의된 테스트(Exit Criteria)를 100% 통과해야 다음 Phase로 진행한다.
 4. **작업 프로토콜**: `[작업금지] 브리핑 → 수정 → 승인`. 코드 작성 전 반드시 브리핑하고 승인을 받는다.
@@ -19,6 +21,7 @@
 6. **컴포넌트 독립성**: 라우터/어댑터는 Mem0·Obsidian·Gemini 등 외부 지식 인프라와 완전히 독립적이다. 라우터의 유일한 Wiki 접점은 "Raw 폴더에 드롭"(옵션)뿐이다.
 7. **PRD 선행**: 작업 시작 전 이 문서 최신 버전을 확인한다. 설계 변경이 필요하면 코드보다 이 문서를 먼저 갱신한다.
 8. **관리 UI 준비**: 새 코드 작성 시 향후 관리 UI가 붙을 것을 전제한다. 설정·상태·에이전트 정보는 `/admin/*` API로 노출 가능한 구조로 설계한다.
+9. **Pull 통신 (v6.8)**: 라우터는 에이전트를 직접 호출(push)하지 않는다. 에이전트가 라우터로 롱폴링하여 일감을 수령하고(`GET /agents/:id/poll`), 결과를 라우터로 제출한다(`POST /agents/:id/result`). 에이전트는 라우터 URL 하나와 등록 토큰만 알면 된다.
 
 ---
 
@@ -32,11 +35,18 @@
 - **그룹/포럼**: N명 사용자 ↔ 에이전트. 응답은 채팅방 전체 공개. 에이전트는 `user_id`로 요청자를 식별해 맥락 파악.
 - **user_id**: 어댑터가 플랫폼 사용자 ID(`from.id`)를 추출해 `payload.user_id`로 항상 포함. 에이전트까지 전달.
 
-### 1.3 현재 상태
-- Telegram 기반 MVP가 에이전트 3기(Zeus/Hera/Athena)를 통제하며 가동 중.
-- Router v2 구현 완료 (55/55 테스트 통과), 실제 에이전트 연동 진행 중.
+### 1.3 배포 모델 (v6.8 신규)
+- **라우터 + 모든 어댑터**: Hostinger VPS의 Docker에서 구동. (이전: 로컬 soyo 머신 → **번복**, 16절 참조)
+- **에이전트(Zeus/Hera/Athena/…)**: 위치 무관. 로컬·외부 머신·클라우드 어디든 가능. **외부 접속을 전제**한다.
+- **연결 방식**: 에이전트는 라우터로 **outbound 롱폴링**만 한다. 에이전트 쪽에 inbound 포트·터널·공개주소가 필요 없다. (SSH 터널·Cloudflare Tunnel 역방향 등 에이전트측 인바운드 설정 전부 폐기)
+- **외부 진입(사용자→라우터)**: 기존 frameq.io / Cloudflare Tunnel 유지.
+- **VPS 사양 참고**: 4core / 8GB, 개발서버 용도. Hera 컨테이너 잔류, 라우터+어댑터 추가 여유 충분.
 
-### 1.4 비범위 (Out of Scope)
+### 1.4 현재 상태
+- Telegram 기반 MVP가 에이전트 3기(Zeus/Hera/Athena)를 통제하며 가동 중.
+- Router v2 구현 완료 (55/55 테스트 통과). Phase 8~10 미구현.
+
+### 1.5 비범위 (Out of Scope)
 - 에이전트 내부의 LLM 추론 로직 (각 에이전트 자체 책임)
 - 플랫폼 SDK 저수준 연결 관리 (각 어댑터 자체 책임)
 - 자동 오케스트레이션/에이전트 자동 선택 (의도적 제외)
@@ -47,59 +57,58 @@
 
 | 원칙 | 내용 |
 |------|------|
-| Stateless Ultra-Thin Core | 코어는 상태·파싱·LLM 0%. JSON 엔벨롭만 배달 |
+| Thin Core with Job Queue (v6.8) | 코어는 파싱·LLM 0%. **일감 큐(단기 상태)는 허용**. 비즈니스 로직 없음 |
 | Strict Separation of Concerns | 코어=Dumb Pipe / 어댑터=Smart Edge / 에이전트=Brain |
 | Universal & Dynamic | 에이전트 추가/제거는 `agents.yaml` 1곳만 수정 |
-| Non-Blocking Concurrency | `Promise.allSettled` 기반 100% 병렬, 장애 격리 |
+| Pull-based Dispatch (v6.8) | 라우터가 에이전트를 호출하지 않는다. 에이전트가 롱폴링으로 일감 수령 |
+| Zero Agent-side Setup (v6.8) | 에이전트는 라우터 URL + 등록 토큰만 필요. inbound 설정 불필요 |
 | 3-Axis Isolation | 메시지=격리 / 인격=플랫폼 초월 공유 / 지식=플랫폼 초월 공용 |
 | Platform Absolute Isolation | 플랫폼 간 메시지 교차·A2A 절대 차단 |
 | Event-Driven Knowledge | Wiki는 메인 파이프라인과 완전 분리된 비동기 워커 |
 | Router-Owned Limits | A2A 한도는 라우터가 agents.yaml에서 강제 주입. 에이전트 제출값 무시 |
-| Admin-UI Ready | 설정·상태는 `/admin/*` API로 노출 가능한 구조. UI는 세팅과 동시에 테스트 가능해야 함 |
+| Admin-UI Ready | 설정·상태는 `/admin/*` API로 노출 가능한 구조 |
+
+> **Stateless 완화 명시**: 기존 "Stateless Ultra-Thin Core (상태 0%)"는 롱폴링 채택으로 폐기되고 "Thin Core with Job Queue"로 대체된다. 라우터는 에이전트별 일감 큐(단기 상태)를 보유한다. 단 텍스트 파싱·LLM 호출·의도 분석 금지는 그대로 유지된다(Dumb Pipe의 본질).
 
 ---
 
-## 3. 시스템 토폴로지 (Topology)
+## 3. 시스템 토폴로지 (Topology) — v6.8 (Pull 모델)
 
 ```
 [ Users (1~N명) ]
    |
-   v
+   v  (frameq.io / Cloudflare Tunnel — 사용자→라우터 진입)
 [ Universal Adapters ] (Telegram / Slack / Discord ...)   <- Smart Edge
    |  +- context_key / persona_key / user_id 생성
-   |  +- @멘션 / DM / 토픽·스레드 파싱
-   |  +- UI 렌더링 (이모지/마크다운, A2A 전 과정 표시)
+   |  +- @멘션 / DM / 토픽·스레드 파싱 / UI 렌더링
    v  (Standard JSON Ingress)
-[ Olympus Router Core ]                                    <- Dumb Pipe
+[ Olympus Router Core ]   ※ Hostinger VPS Docker        <- Thin Core + Job Queue
    |  +- agents.yaml 기반 to/cc 검증
-   |  +- Session ID 생성/관리 (A2A 세션 식별)
+   |  +- 에이전트별 Job Queue (일감 적재, 멱등키 드롭)
+   |  +- 등록 토큰 검증 (poll/result 인증)
+   |  +- Session ID 생성/관리 + Session Store (TTL)
    |  +- A2A 가드 (권한 / 발화자 한도 / 라운드 / 조기종료)
-   |  +- Session Store (발화 카운터 서버 보관, TTL 자동 만료)
-   |  +- Promise.allSettled 병렬 디스패치
-   |  +- callback_url 응답 귀환 경로 (어댑터로 결과 POST)
-   |  +- /admin/* 관리 API (에이전트 CRUD, 상태 조회, dry-run)
+   |  +- /admin/* 관리 API
    |  +- (옵션) 전 메시지 -> /data/wiki/raw/ 드롭
    |
+   |  ▲ GET /agents/:id/poll   (에이전트가 일감 가져감, 롱폴링)
+   |  ▲ POST /agents/:id/result (에이전트가 결과 제출 → 어댑터 전달)
+   |  ※ 라우터는 에이전트를 직접 호출하지 않는다 (push 폐기)
+   |
    +--------------+--------------+
-   v              v              v
-[ Agent A(to) ] [ Agent B(to) ] [ Agent C(cc, 청취전용) ]   <- Brain
+   ↑              ↑              ↑   (outbound 롱폴링만, inbound 불필요)
+[ Agent A(to) ] [ Agent B(to) ] [ Agent C(cc) ]   <- Brain (위치 무관)
+   |  +- 라우터 URL + 등록 토큰만 보유
    |  +- A2A 필요 시 라우터로 재진입 (_source_url 필수)
-   |  +- mode(single/dialogue) 결정 책임
    |  +- over/out/resolved 신호로 종료 선언
    |
   Mem0 (agent_id, 플랫폼 초월 인격/기억)
 
-============= Async Boundary (코어 부하 0%) =============
-
+============= Async Boundary =============
 [ /data/wiki/raw/ ] --(watch)--> [ Gemini Wiki Engine ] --> [ Obsidian Unified KB ]
 
 ============= 관리 레이어 (향후) =============
-
 [ Admin UI ] <--> [ /admin/* API ] <--> [ Olympus Router Core ]
-   +- 에이전트 등록/수정/삭제 + 즉시 연결 테스트
-   +- agents.yaml 편집 + dry-run 검증
-   +- 세션/멱등성 스토어 현황 조회
-   +- 에이전트별 헬스 집계 대시보드
 ```
 
 ---
@@ -196,6 +205,10 @@
 7. 발화자 한도 (session_store 기준)
 ```
 
+### 6.6 A2A와 Pull 모델 (v6.8)
+- A2A 재진입도 직접 호출이 아니라 큐 적재 + 폴링 수령으로 동작한다.
+- DIALOGUE는 라운드마다 큐 적재→폴링 수령→result 제출이 반복된다. 롱폴링이므로 라운드당 지연은 최소화되나 0은 아니다. 실제 에이전트 왕복 검증 전까지 "완료"로 보지 않는다.
+
 ---
 
 ## 7. 데이터 규격 (Contracts)
@@ -219,7 +232,39 @@
 > `user_id`: 어댑터가 항상 포함. DM은 `chat_id === user_id`. 그룹은 요청자 식별용.
 > 응답 귀환: DM은 `user_id`로, 그룹/포럼은 `chat_id`(방 전체)로.
 
-### 7.2 A2A Envelope — SINGLE
+### 7.2 Job 수령 — GET /agents/:id/poll (v6.8)
+에이전트가 자신의 일감을 롱폴링으로 가져간다.
+```
+GET /agents/zeus/poll
+Authorization: Bearer <등록 토큰>
+
+# 큐에 일감 있으면 즉시 반환:
+200 { "job_id": "j_abc", "envelope": { ...Ingress Envelope... } }
+
+# 큐 비어있으면 보류(롱폴링 타임아웃까지 대기), 만료 시:
+204 No Content   # 에이전트는 즉시 재폴링
+```
+> 토큰 불일치/누락 → `401`. 등록되지 않은 `:id` → `404`.
+
+### 7.3 Job 결과 — POST /agents/:id/result (v6.8)
+에이전트가 처리 결과를 제출한다. 라우터가 어댑터로 전달한다.
+```
+POST /agents/zeus/result
+Authorization: Bearer <등록 토큰>
+{
+  "job_id": "j_abc",
+  "result": {
+    "status": "success",
+    "response_text": "검토 완료...",
+    "a2a_status": "resolved",
+    "activities": [{ "tool": "terminal", "detail": "kubectl get pods" }]
+  }
+}
+```
+> 응답 귀환은 `/result` 단일 경로로 통일. 기존 callback 서버(8798)는 폐기(16절 참조).
+> 라우터는 result 수신 후 어댑터로 전달. 라우터가 Telegram API를 직접 호출하지 않는다는 원칙은 유지(어댑터가 게시).
+
+### 7.4 A2A Envelope — SINGLE
 ```json
 {
   "context_key": "telegram:forum:C123:42",
@@ -228,7 +273,7 @@
     "origin_platform": "telegram",
     "text": "예산 잔액 알려줘",
     "user_id": "123456789",
-    "_source_url": "http://127.0.0.1:9001"
+    "_source_url": "http://zeus-host:9001"
   },
   "a2a": {
     "enabled": true,
@@ -240,8 +285,9 @@
   }
 }
 ```
+> `_source_url`: A2A 재진입 시 caller 자신의 URL. registry 등록 URL origin과 정확 일치해야 함. 누락 시 `A2A_SPOOF_DETECTED`.
 
-### 7.3 A2A Envelope — DIALOGUE
+### 7.5 A2A Envelope — DIALOGUE
 ```json
 {
   "context_key": "telegram:forum:C123:42",
@@ -250,7 +296,7 @@
     "origin_platform": "telegram",
     "text": "서버 증설 함께 결정하자",
     "user_id": "123456789",
-    "_source_url": "http://127.0.0.1:9001"
+    "_source_url": "http://zeus-host:9001"
   },
   "a2a": {
     "enabled": true,
@@ -265,7 +311,7 @@
 }
 ```
 
-### 7.4 Egress Envelope (Core -> Adapter)
+### 7.6 Egress Envelope (Core -> Adapter)
 ```json
 {
   "ok": true,
@@ -288,7 +334,7 @@
 }
 ```
 
-### 7.5 config/agents.yaml
+### 7.7 config/agents.yaml (v6.8)
 ```yaml
 system:
   a2a:
@@ -298,21 +344,26 @@ system:
     allow_self_call: false
     allow_cross_platform: false
     session_ttl_ms: 3600000
+  poll:
+    long_poll_timeout_ms: 25000   # 롱폴링 보류 최대 대기 (만료 시 204)
+    job_queue_ttl_ms: 600000      # 큐 일감 TTL (미수령 시 만료)
   wiki:
     raw_logging_enabled: false
     raw_path: "data/wiki/raw/"
 
 agents:
   - id: "zeus"
-    url: "http://127.0.0.1:9001"
+    url: "http://zeus-host:9001"      # _source_url 스푸핑 대조용 (라우터가 호출하지 않음)
     a2a: { can_initiate: true, allowed_targets: "*" }
   - id: "hera"
-    url: "http://127.0.0.1:9002"
+    url: "http://hera-host:9002"
     a2a: { can_initiate: true, allowed_targets: "*" }
   - id: "athena"
-    url: "http://127.0.0.1:9003"
+    url: "http://athena-host:9003"
     a2a: { can_initiate: true, allowed_targets: "*" }
 ```
+> **v6.8에서 `url`의 의미 변화**: 라우터가 에이전트를 호출하던 주소 → 이제 호출하지 않으므로 호출 용도 폐기. `url`은 **A2A 재진입 시 `_source_url` origin 대조(스푸핑 방지)용 식별값**으로만 사용된다.
+> **등록 토큰**: 에이전트별 토큰은 yaml이 아닌 **env**로만 관리(예: `OLYMPUS_AGENT_TOKEN_ZEUS`). yaml·API에 노출 금지.
 
 ---
 
@@ -323,48 +374,43 @@ agents:
 
 ### 8.1 Admin API 네임스페이스 (`/admin/*`)
 
-지금 당장 구현하지 않더라도, 신규 코드 작성 시 아래 엔드포인트를 붙일 수 있는 구조로 설계한다.
-
 | 엔드포인트 | 용도 |
 |-----------|------|
-| `GET /admin/agents` | 등록된 에이전트 목록 + 헬스 상태 집계 |
+| `GET /admin/agents` | 등록된 에이전트 목록 + **폴링 연결 상태** 집계 |
 | `POST /admin/agents` | 에이전트 등록 (yaml 반영) |
 | `PUT /admin/agents/:id` | 에이전트 수정 |
 | `DELETE /admin/agents/:id` | 에이전트 삭제 |
-| `POST /admin/agents/:id/test` | **연결 테스트** — 저장 전 헬스체크 + ping |
-| `POST /admin/dry-run` | **라우팅 dry-run** — 실제 전송 없이 라우팅 경로·에이전트 연결 검증 |
+| `POST /admin/agents/:id/test` | **연결 테스트** — pull 모델에선 "최근 폴링 수신 여부"로 판정 |
+| `POST /admin/dry-run` | **라우팅 dry-run** — 실제 전송 없이 라우팅 경로 + 에이전트 폴링 활성 여부 검증 |
 | `GET /admin/sessions` | 현재 활성 A2A 세션 목록 |
-| `GET /admin/status` | 전체 컴포넌트 상태 (router/gateway/agents) |
+| `GET /admin/queues` | 에이전트별 큐 적재 현황 (v6.8 신규) |
+| `GET /admin/status` | 전체 컴포넌트 상태 |
 
-### 8.2 Dry-run 엔드포인트 규격
-
+### 8.2 Dry-run 엔드포인트 규격 (v6.8 — 헬스 판정 기준 변경)
 ```json
 // POST /admin/dry-run
 // Request
-{
-  "envelope": { ... },   // 테스트할 엔벨롭
-  "options": { "check_health": true }
-}
+{ "envelope": { ... }, "options": { "check_poll": true } }
 
 // Response
 {
   "ok": true,
   "routing_resolved": { "to": ["zeus"], "cc": ["athena"] },
-  "agent_health": {
-    "zeus":   { "reachable": true,  "latency_ms": 12 },
-    "athena": { "reachable": false, "error": "ECONNREFUSED" }
+  "agent_poll_status": {
+    "zeus":   { "polling": true,  "last_poll_ms_ago": 1200 },
+    "athena": { "polling": false, "note": "no recent poll — agent offline?" }
   },
-  "would_dispatch": true,
-  "warnings": ["athena is unreachable — cc will silently fail"]
+  "would_enqueue": true,
+  "warnings": ["athena is not polling — job will sit in queue until TTL"]
 }
 ```
+> **헬스 판정 변화 (push→pull)**: 기존 dry-run은 라우터가 에이전트로 ping(reachable) 했으나, pull 모델에선 라우터가 에이전트를 호출하지 않으므로 **"최근 폴링 수신 여부(`last_poll_ms_ago`)"** 로 살아있음을 판정한다.
 
 ### 8.3 설계 원칙
-
-- **민감값 분리**: 토큰·시크릿은 yaml이 아닌 env로만. Admin API가 yaml을 읽고 쓸 수 있어도 민감값은 노출하지 않는다.
-- **세팅 즉시 테스트**: URL 입력 → 저장 전 `/admin/agents/:id/test` 자동 호출. 실패 시 저장 불가.
-- **상태 가시성**: session_store, idempotency_store 현재 상태를 Admin API로 조회 가능.
-- **registry 런타임 재로드**: agents.yaml 변경 시 재시작 없이 반영 가능한 구조 유지.
+- **민감값 분리**: 토큰·시크릿은 env로만. yaml/API에 노출 금지.
+- **세팅 즉시 테스트**: 에이전트 등록 → `/admin/agents/:id/test`로 폴링 수신 확인.
+- **상태 가시성**: session_store, job queue, idempotency_store 현황을 Admin API로 조회 가능.
+- **registry 런타임 재로드**: agents.yaml 변경 시 재시작 없이 반영.
 
 ---
 
@@ -384,6 +430,8 @@ agents:
 ### Phase 0~7 ✅ (완료)
 Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 
+> ⚠️ **v6.8 영향**: Phase 2(병렬 push 디스패치) 관련 테스트는 pull 모델 전환으로 계약이 바뀐다. Phase 10 구현 시 충돌하는 기존 테스트는 1회성 수정 허용(before/after 보고 필수).
+
 ### Phase 8 — Agora 동기화 (미구현)
 - [ ] T5.17: session_id 없으면 라우터가 자동 생성
 - [ ] T5.18: 발화 카운터를 session_store에서 관리
@@ -395,11 +443,23 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 ### Phase 9 — 다중 사용자 & Admin UI 준비 (미구현)
 - [ ] T9.1: 어댑터가 `payload.user_id` 항상 추출·포함
 - [ ] T9.2: DM 응답은 `user_id`로, 그룹 응답은 `chat_id`(전체)로
-- [ ] T9.3: `GET /admin/agents` — 에이전트 목록 + 헬스 집계
-- [ ] T9.4: `POST /admin/agents/:id/test` — 저장 전 연결 테스트
-- [ ] T9.5: `POST /admin/dry-run` — 라우팅 경로 + 에이전트 연결 검증
+- [ ] T9.3: `GET /admin/agents` — 목록 + 폴링 상태 집계
+- [ ] T9.4: `POST /admin/agents/:id/test` — 폴링 수신 확인
+- [ ] T9.5: `POST /admin/dry-run` — 라우팅 경로 + 폴링 활성 검증
 - [ ] T9.6: `GET /admin/sessions` — 활성 A2A 세션 목록
 - [ ] T9.7: `GET /admin/status` — 전체 컴포넌트 상태
+
+### Phase 10 — Pull 통신 모델 전환 (v6.8 신규, 미구현)
+- [ ] T10.1: 에이전트 토큰으로 `GET /poll` → 큐 비면 보류(204), 일감 들어오면 즉시 반환
+- [ ] T10.2: 잘못된/누락 토큰 폴링 → `401`
+- [ ] T10.3: 라우터가 에이전트 inbound 없이 일감 전달 (직접 push 호출 코드 제거 확인)
+- [ ] T10.4: `POST /result` → 어댑터로 결과 전달, 텔레그램 게시 (callback 8798 미사용 확인)
+- [ ] T10.5: 큐 적재 시 idempotency_key 적용 — 중복 일감 드롭
+- [ ] T10.6: 라우터 재시작 시 큐 휘발 허용 (느슨한 멱등성, 기존 결정과 정합)
+- [ ] T10.7: A2A 재진입도 폴링 경로로 동작 (DIALOGUE 라운드 큐 적재→수령→result)
+- [ ] T10.8: 등록 안 된 agent_id 폴링 → `404`
+- [ ] T10.9: 큐 일감 TTL 만료 → 미수령 일감 제거 + warning 로그
+- [ ] T10.10: (실연동) 실제 에이전트 1기 DM/그룹 실메시지 왕복 — mock 통과는 완료 불인정
 
 ---
 
@@ -409,16 +469,19 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 |------|------|
 | context_key | 대화 공간 고유 식별자, 메시지 격리축 |
 | persona_key | `{agent_id}`, 인격/기억 식별자, 플랫폼 초월 공유 |
-| user_id | 플랫폼 사용자 고유 ID. 어댑터가 추출해 payload에 포함. 에이전트 맥락 파악용 |
-| session_id | A2A 세션 식별자. 라우터 SSOT. `legacy:{platform}:{context_key}:{origin_agent}` |
+| user_id | 플랫폼 사용자 고유 ID. 어댑터가 추출해 payload에 포함 |
+| session_id | A2A 세션 식별자. 라우터 SSOT |
 | session_store | 라우터 서버 메모리의 발화 카운터 보관소. TTL 자동 만료 |
+| job queue | (v6.8) 에이전트별 일감 적재 큐. 에이전트가 폴링으로 수령. 단기 상태 |
+| poll | (v6.8) 에이전트가 라우터로 일감을 가져가는 롱폴링 요청 (`GET /agents/:id/poll`) |
+| result | (v6.8) 에이전트가 라우터로 결과를 제출하는 요청 (`POST /agents/:id/result`) |
+| 등록 토큰 | (v6.8) 에이전트가 poll/result 시 제시하는 인증 토큰. env로만 관리 |
 | speaker_counts | 발화자별 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
 | over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 |
 | _source_url | A2A 재진입 시 caller 필수 포함 URL. 스푸핑 방지용 |
-| dry-run | 실제 전송 없이 라우팅 경로·에이전트 연결만 검증하는 테스트 모드 |
-| to | 응답 의무가 있는 호출 대상 |
-| cc | 청취만 하는 배경 참여자 |
-| Dumb Pipe | 파싱·로직 없는 순수 라우팅 코어 |
+| dry-run | 실제 전송 없이 라우팅 경로·폴링 활성 여부만 검증하는 테스트 모드 |
+| to / cc | 응답 의무 대상 / 청취만 하는 배경 참여자 |
+| Dumb Pipe | 파싱·로직 없는 순수 라우팅 코어 (v6.8: 큐 상태는 허용) |
 | Smart Edge | 파싱·렌더링 담당 어댑터 |
 | SSOT | 단일 진실 공급원 (이 문서 + agents.yaml) |
 
@@ -437,6 +500,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | `A2A_SPEAKER_LIMIT_EXCEEDED` | 발화자 10회 초과 |
 | `A2A_ROUND_LIMIT_EXCEEDED` | DIALOGUE 10라운드 초과 |
 | `A2A_EARLY_TERMINATION` | resolved/out 정상 조기종료 |
+| `UNAUTHORIZED_POLL` (v6.8) | poll/result 토큰 누락·불일치 (HTTP 401) |
 
 ---
 
@@ -452,6 +516,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.5 | Phase 1~7 + E2E 완료 / callback_url 응답 귀환 / hera-webhook-adapter |
 | v6.6 | Agora 동기화 — 세션ID/Session Store/워키토키/스푸핑 강화/limits 강제 주입 |
 | v6.7 | 다중 사용자(user_id) / Admin UI 준비 설계(8절) / Phase 9 추가 / PRD 선행 원칙 추가 |
+| v6.8 | **대규모 설계 전환** — 라우터+어댑터 VPS Docker 이전 / push→pull(롱폴링) 통신모델 / 에이전트 등록 토큰 / 결과 귀환 `/result` 통일(callback 8798 폐기) / Stateless 0% → Thin Core with Job Queue 완화 / SSH·Tunnel 역방향 등 에이전트측 inbound 폐기 / Phase 10 추가 / 확정결정 5건 번복(16절) |
 
 ---
 
@@ -461,10 +526,12 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 |------|------|
 | Phase 8 (T5.17~T5.22) | 미완 — Agora session-store 포팅 필요 |
 | Phase 9 (user_id, Admin API) | 미완 — 설계 확정, 구현 대기 |
-| Zeus 비서실 응답 귀환 | 진행 중 — callback 서버(8798) 실제 동작 미검증 |
+| Phase 10 (Pull 통신 전환) | 미완 — 본 v6.8 신규, 구현 대기 |
+| 하위 문서 정합화 | 미완 — CLAUDE.md / SKILLS.md / Dev_Enhancement_Olympus.md를 v6.8에 맞게 갱신 필요 |
 | A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
-| Athena Windows 이전 | Hostinger Docker → Windows native 예정 |
+| Athena Windows 이전 | 위치 무관(pull)이라 제약 완화. 단 실연동 검증 필요 |
 | Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
+| 등록 토큰 발급/배포 절차 | 미정 — env 키 네이밍·로테이션 정책 필요 |
 
 ---
 
@@ -472,7 +539,25 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 
 > `[작업금지] 브리핑 → 수정 → 승인` 프로토콜 유지.
 
-1. **Phase 8** — Agora session-store.js 포팅 + _source_url 강제 + out 신호
-2. **Zeus 비서실** — callback 서버 실제 동작 검증
-3. **Phase 9** — user_id 어댑터 추출 + Admin API 기초 구현
-4. **Athena Windows 이전**
+1. **하위 문서 정합화** — CLAUDE.md/SKILLS.md/Dev_Enhancement의 "Stateless 0%·push·callback·로컬 고정·SSH" 기술을 v6.8로 갱신 (안 하면 문서 모순)
+2. **Phase 10** — Job Queue + poll/result 엔드포인트 + 등록 토큰 검증 구현
+3. **Phase 8** — Agora session-store 포팅
+4. **Phase 9** — user_id 어댑터 추출 + Admin API
+5. **VPS Docker 이전** — Dockerfile + docker-compose (라우터+어댑터)
+6. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
+
+---
+
+## 16. v6.8 확정 결정 번복 기록 (Decision Reversal Log)
+
+이전까지 "확정/재논의 금지/핵심 제약"으로 잠겨 있던 결정 5건을 본 버전에서 의도적으로 번복한다. 사유: 라우터·어댑터를 외부 접속 가능한 VPS로 이전하고, 에이전트가 어디 있든 추가 설정 없이 합류할 수 있게 하기 위함.
+
+| # | 기존 확정 결정 | v6.8 번복 후 | 사유 |
+|---|------|------|------|
+| R1 | Olympus Router는 로컬(soyo)에서 실행, Hostinger VPS 아님 | 라우터+어댑터를 Hostinger VPS Docker로 이전 | 외부 접속·범용 운영 전제 |
+| R2 | 라우터가 에이전트를 직접 호출(push), 202 즉시 반환 후 dispatch | push 폐기, 에이전트가 롱폴링으로 일감 수령(pull) | 에이전트측 inbound 설정 제거 |
+| R3 | Stateless Ultra-Thin Core — 코어 상태 0% | Thin Core with Job Queue — 일감 큐(단기 상태) 허용 | pull 모델은 큐 보유 불가피. 파싱·LLM 금지는 유지 |
+| R4 | Hera는 SSH 터널(port 9002)로 연결 | SSH 폐기, 모든 에이전트 outbound 롱폴링으로 통일 | SSH는 사전 키 교환 필요, 외부·무설정 전제에 부적합 |
+| R5 | 응답 귀환은 callback 서버(8798) 방식 | `/result` 단일 경로로 통일, 8798 폐기 | 에이전트가 라우터 URL 하나만 알면 되도록 |
+
+> 본 번복은 운영자(CUE) 승인 하에 이루어졌다. 하위 문서가 아직 기존 기술을 담고 있으면 본 PRD가 우선한다.
