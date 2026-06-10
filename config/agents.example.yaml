@@ -1,0 +1,43 @@
+# config/agents.example.yaml — 공개 구조 템플릿
+# 이 파일을 config/agents.yaml로 복사한 뒤 실제 값으로 채운다.
+# agents.yaml은 git 미추적(.gitignore). 이 파일만 리포에 포함된다.
+# 등록 토큰은 yaml이 아닌 env로 관리: OLYMPUS_AGENT_TOKEN_{ID 대문자}
+#   예: OLYMPUS_AGENT_TOKEN_AGENT_ONE=your-secret-token-here
+
+system:
+  a2a:
+    max_speaker_calls: 10
+    max_rounds: 10
+    default_mode: "single"
+    allow_self_call: false
+    allow_cross_platform: false
+    session_ttl_ms: 3600000        # A2A 세션 TTL (밀리초)
+  poll:
+    long_poll_timeout_ms: 25000    # 롱폴링 보류 최대 대기 (만료 시 204)
+    job_queue_ttl_ms: 600000       # 큐 일감 TTL — 미수령 시 만료
+  wiki:
+    raw_logging_enabled: false
+    raw_backend: "file"            # "file" | "sqlite"
+    raw_path: "data/wiki/raw/"     # file 백엔드용 디렉터리
+    sqlite_path: "data/wiki/raw.db"  # sqlite 백엔드용 DB 경로
+
+agents:
+  - id: "agent-one"
+    url: "http://agent-one-host:9001"
+    # v6.8: url은 라우터가 호출하는 주소가 아님.
+    # A2A 재진입 시 payload._source_url origin 대조(스푸핑 방지)용으로만 사용.
+    a2a:
+      can_initiate: true
+      allowed_targets: "*"         # "*" = 자기 제외 전체 / ["id"] = 지정 / [] = 수신 전용
+
+  - id: "agent-two"
+    url: "http://agent-two-host:9002"
+    a2a:
+      can_initiate: true
+      allowed_targets: "*"
+
+  - id: "agent-readonly"
+    url: "http://agent-readonly-host:9003"
+    a2a:
+      can_initiate: false           # A2A 개시 불가 (수신 전용)
+      allowed_targets: []
