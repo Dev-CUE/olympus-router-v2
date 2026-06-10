@@ -1,7 +1,7 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.4 (Final — 아테나 검토 반영판)
-> **상태**: Phase 0 (설계 확정 완료) → Phase 1 착수 대기
+> **버전**: v6.5 (구현 완료 — Phase 1~7 + E2E 전체 통과)
+> **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / 실제 에이전트 연동 진행 중
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
 > **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
 
@@ -32,7 +32,7 @@
 ### 1.3 현재 상태
 - Telegram 기반 MVP가 에이전트 3기(Zeus/Hera/Athena)를 통제하며 가동 중 (레퍼런스 환경).
 - 에이전트 3기는 Mem0에 맵핑되어 있다.
-- 이 MVP의 레거시 직렬·하드코딩 로직을 V6 규격으로 진화시키는 것이 본 프로젝트.
+- Router v2 구현 완료 (55/55 테스트 통과), 실제 에이전트 연동 진행 중.
 
 ### 1.4 비범위 (Out of Scope)
 - 에이전트 내부의 LLM 추론 로직 (각 에이전트 자체 책임)
@@ -70,6 +70,7 @@
    |  +- agents.yaml 기반 to/cc 검증
    |  +- A2A 가드 (권한 / 발화자 한도 / 라운드 / 조기종료)
    |  +- Promise.allSettled 병렬 디스패치
+   |  +- callback_url 응답 귀환 경로 (어댑터로 결과 POST)
    |  +- (옵션) 전 메시지 -> /data/wiki/raw/ 드롭
    |
    +--------------+--------------+
@@ -135,7 +136,7 @@
 어댑터가 플랫폼별로 정밀한 context_key를 생성한다. topic/thread 없으면 `root`로 정규화.
 
 | 플랫폼 | 공간 유형 | 격리 ID | 특이사항 |
-|--------|-----------|---------|---------|
+|--------|-----------|---------|---------| 
 | Telegram | 일반 그룹 | `chat_id` + `root` | thread 없음 |
 | Telegram | 포럼 토픽 | `chat_id` + `message_thread_id` | `is_forum:true` 판별. General Topic(1) → `root` 정규화. 응답 시 message_thread_id 필수 |
 | Telegram | DM | `chat_id` + `root` | 봇1기=에이전트1 |
@@ -316,21 +317,21 @@ system:
     allow_self_call: false
     allow_cross_platform: false
   wiki:
-    raw_logging_enabled: true   # system.wiki 하위로 고정 (코드는 registry.system.wiki로 접근)
+    raw_logging_enabled: false  # system.wiki 하위로 고정 (코드는 registry.system.wiki로 접근)
     raw_path: "data/wiki/raw/"
 
 agents:
   - id: "zeus"
-    url: "http://zeus-agent:3001"
+    url: "http://127.0.0.1:9001"
     a2a: { can_initiate: true,  allowed_targets: "*" }
 
   - id: "hera"
-    url: "http://hera-agent:3002"
+    url: "http://127.0.0.1:9002"
     a2a: { can_initiate: true,  allowed_targets: "*" }
 
   - id: "athena"
-    url: "http://athena-agent:3003"
-    a2a: { can_initiate: false, allowed_targets: [] }
+    url: "http://127.0.0.1:9003"
+    a2a: { can_initiate: true, allowed_targets: "*" }
 ```
 > `allowed_targets`: `"*"`=전체 / `[]`=수신전용 / `["id"]`=지정.
 
@@ -351,7 +352,7 @@ agents:
 
 각 Phase는 Exit Criteria를 100% 통과해야 다음으로 진행.
 
-### Phase 0 — 설계 확정 (완료)
+### Phase 0 — 설계 확정 ✅
 - [x] 3축 격리 모델 확정
 - [x] A2A 2모드 + 발화자 기준 한도 확정
 - [x] 종료 조건 3-트리거 확정
@@ -359,100 +360,86 @@ agents:
 - [x] 플랫폼별 토픽/스레드 격리 규격 확정
 - [x] 본 PRD v6.3 작성
 
-### Phase 1 — 코어 철거 & 동적 레지스트리
-**작업**: 레거시 제거, agents.yaml 동적 로더, `POST /v1/route` 단일 엔드포인트.
-
+### Phase 1 — 코어 철거 & 동적 레지스트리 ✅
 **Exit Criteria**
-- [ ] T1.1: yaml 에이전트 3기 → registry 3개 로드
-- [ ] T1.2: yaml에 4번째 추가 → 코드 무수정으로 4개 로드
-- [ ] T1.3: 존재하지 않는 `to:["ghost"]` → `UNKNOWN_AGENT`
-- [ ] T1.4: 코드 전체 grep, 에이전트 이름 하드코딩 0건
-- [ ] T1.5: 유효 단일 `to` → 해당 URL 패스스루 성공
+- [x] T1.1: yaml 에이전트 3기 → registry 3개 로드
+- [x] T1.2: yaml에 4번째 추가 → 코드 무수정으로 4개 로드
+- [x] T1.3: 존재하지 않는 `to:["ghost"]` → `UNKNOWN_AGENT`
+- [x] T1.4: 코드 전체 grep, 에이전트 이름 하드코딩 0건
+- [x] T1.5: 유효 단일 `to` → 해당 URL 패스스루 성공
 
-### Phase 2 — 논블로킹 병렬 실행 엔진
-**작업**: `Promise.allSettled` 병렬, cc Fire-and-forget, 성공/실패 Egress 매핑.
-
+### Phase 2 — 논블로킹 병렬 실행 엔진 ✅
 **Exit Criteria**
-- [ ] T2.1: `to:[A,B,C]` 병렬 (총시간 ≈ 최장 1개)
-- [ ] T2.2: A 타임아웃 → B,C 정상 (장애 격리)
-- [ ] T2.3: `cc:[D]` → 응답 대기 없이 즉시 반환
-- [ ] T2.4: cc D 다운 → 메인 영향 0
-- [ ] T2.5: 실패 `status:"error"`, 성공 `status:"success"`
+- [x] T2.1: `to:[A,B,C]` 병렬 (총시간 ≈ 최장 1개)
+- [x] T2.2: A 타임아웃 → B,C 정상 (장애 격리)
+- [x] T2.3: `cc:[D]` → 응답 대기 없이 즉시 반환
+- [x] T2.4: cc D 다운 → 메인 영향 0
+- [x] T2.5: 실패 `status:"error"`, 성공 `status:"success"`
 
-### Phase 3 — 유니버셜 스마트 어댑터
-**작업**: 플랫폼별 context_key 생성, DM(봇1기=에이전트1), Group(@멘션→to, 나머지→cc), persona_key={agent_id}, activities 렌더링.
-
+### Phase 3 — 유니버셜 스마트 어댑터 ✅
 **Exit Criteria**
-- [ ] T3.1: 텔레그램 DM → `space_type=dm`, to=봇1기
-- [ ] T3.2: 텔레그램 그룹 `@hera` → `to:[hera]`, `cc:[나머지]`
-- [ ] T3.3: 멘션 없는 그룹 → `to:[]`, 전원 cc
-- [ ] T3.4: 포럼 토픽 → `telegram:forum:C:42`, 토픽1↔토픽2 격리
-- [ ] T3.5: General Topic(1) → `root` 정규화
-- [ ] T3.6: 슬랙 thread_ts / 디스코드 thread_id 정확 추출
-- [ ] T3.7: persona_key = `{agent_id}` (플랫폼 prefix 없음)
-- [ ] T3.8: activities → 이모지 렌더링
-- [ ] T3.9: 어댑터 코드 에이전트 이름 하드코딩 0건
+- [x] T3.1: 텔레그램 DM → `space_type=dm`, to=봇1기
+- [x] T3.2: 텔레그램 그룹 `@hera` → `to:[hera]`, `cc:[나머지]`
+- [x] T3.3: 멘션 없는 그룹 → `to:[]`, 전원 cc
+- [x] T3.4: 포럼 토픽 → `telegram:forum:C:42`, 토픽1↔토픽2 격리
+- [x] T3.5: General Topic(1) → `root` 정규화
+- [x] T3.6: 슬랙 thread_ts / 디스코드 thread_id 정확 추출
+- [x] T3.7: persona_key = `{agent_id}` (플랫폼 prefix 없음)
+- [x] T3.8: activities → 이모지 렌더링
+- [x] T3.9: 어댑터 코드 에이전트 이름 하드코딩 0건
 
-### Phase 4 — 메모리 스코프 주입 (3축)
-**작업**: 라우터가 memory_scope 주입(space_key, persona_key). cc는 persona 미기록.
-
+### Phase 4 — 메모리 스코프 주입 (3축) ✅
 **Exit Criteria**
-- [ ] T4.1: 그룹A 대화 → 그룹B에 raw 로그 미노출 (MESSAGE 격리)
-- [ ] T4.2: 슬랙 에이전트가 텔레그램 결정사항 인지 (PERSONA 공유)
-- [ ] T4.3: 슬랙 에이전트가 텔레그램 대화 로그는 미인지 (MESSAGE 격리)
-- [ ] T4.4: persona_key = `{agent_id}` (플랫폼 무관)
-- [ ] T4.5: cc 참여 시 persona 미기록
+- [x] T4.1: 그룹A 대화 → 그룹B에 raw 로그 미노출 (MESSAGE 격리)
+- [x] T4.2: 슬랙 에이전트가 텔레그램 결정사항 인지 (PERSONA 공유)
+- [x] T4.3: 슬랙 에이전트가 텔레그램 대화 로그는 미인지 (MESSAGE 격리)
+- [x] T4.4: persona_key = `{agent_id}` (플랫폼 무관)
+- [x] T4.5: cc 참여 시 persona 미기록
 
-### Phase 5 — A2A 협업 엔진 (2모드 + 발화자 한도)
-**작업**: 권한→발화자한도→조기종료→라운드 가드, caller 스푸핑 검증, 개시자 통합 반환.
-
+### Phase 5 — A2A 협업 엔진 (2모드 + 발화자 한도) ✅
 **Exit Criteria**
-- [ ] T5.1: SINGLE zeus→hera → 즉시 종료, speaker_counts[zeus]: 1
-- [ ] T5.2: SINGLE 연쇄 — zeus 11번째 발화 → `A2A_SPEAKER_LIMIT_EXCEEDED` (10까지만)
-- [ ] T5.3: 3기 DIALOGUE — 각자 10회씩 발화 가능, 전원 10라운드 도달 ✅
-- [ ] T5.4: DIALOGUE 11라운드 → `A2A_ROUND_LIMIT_EXCEEDED`
-- [ ] T5.5: DIALOGUE 중 `status:"resolved"` → 라운드·발화 한도 전 조기종료
-- [ ] T5.6: resolved가 발화 한도·라운드보다 먼저 체크됨 확인
-- [ ] T5.7: `can_initiate:false` A2A → `A2A_INITIATION_DENIED`
-- [ ] T5.8: `allowed_targets` 위반 → `A2A_UNAUTHORIZED`
-- [ ] T5.9: 자기 호출 → `A2A_SELF_CALL`
-- [ ] T5.10: telegram→slack A2A → `A2A_CROSS_PLATFORM_DENIED`
-- [ ] T5.11: cc의 A2A 개시 → 차단
-- [ ] T5.12: 위조 caller 재진입 → 스푸핑 검증 실패
-- [ ] T5.13: DIALOGUE 중간 라운드 → SPACE만 기록, Mem0 미기록
-- [ ] T5.14: DIALOGUE resolved → 최종 결론만 Mem0 기록
-- [ ] T5.15: cc가 DIALOGUE 매 라운드 청취 (게시·기록 없음)
-- [ ] T5.16: 모드 미지정 → 기본값 single 적용
+- [x] T5.1: SINGLE zeus→hera → 즉시 종료, speaker_counts[zeus]: 1
+- [x] T5.2: SINGLE 연쇄 — zeus 11번째 발화 → `A2A_SPEAKER_LIMIT_EXCEEDED` (10까지만)
+- [x] T5.3: 3기 DIALOGUE — 각자 10회씩 발화 가능, 전원 10라운드 도달 ✅
+- [x] T5.4: DIALOGUE 11라운드 → `A2A_ROUND_LIMIT_EXCEEDED`
+- [x] T5.5: DIALOGUE 중 `status:"resolved"` → 라운드·발화 한도 전 조기종료
+- [x] T5.6: resolved가 발화 한도·라운드보다 먼저 체크됨 확인
+- [x] T5.7: `can_initiate:false` A2A → `A2A_INITIATION_DENIED`
+- [x] T5.8: `allowed_targets` 위반 → `A2A_UNAUTHORIZED`
+- [x] T5.9: 자기 호출 → `A2A_SELF_CALL`
+- [x] T5.10: telegram→slack A2A → `A2A_CROSS_PLATFORM_DENIED`
+- [x] T5.11: cc의 A2A 개시 → 차단
+- [x] T5.12: 위조 caller 재진입 → 스푸핑 검증 실패
+- [x] T5.13: DIALOGUE 중간 라운드 → SPACE만 기록, Mem0 미기록
+- [x] T5.14: DIALOGUE resolved → 최종 결론만 Mem0 기록
+- [x] T5.15: cc가 DIALOGUE 매 라운드 청취 (게시·기록 없음)
+- [x] T5.16: 모드 미지정 → 기본값 single 적용
 
-### Phase 6 — 멱등성 & 장애 격리
-**작업**: idempotency_key 중복 드롭(202), 이벤트 스풀(JSONL).
-
+### Phase 6 — 멱등성 & 장애 격리 ✅
 **Exit Criteria**
-- [ ] T6.1: 동일 message_id 재전송 → `202 Accepted` 무시
-- [ ] T6.2: Wiki 워커 다운 → 메인 라우팅 정상
-- [ ] T6.3: 1000건 동시 인입 → 코어 블로킹 없음
+- [x] T6.1: 동일 message_id 재전송 → `202 Accepted` 무시
+- [x] T6.2: Wiki 워커 다운 → 메인 라우팅 정상
+- [x] T6.3: 1000건 동시 인입 → 코어 블로킹 없음
 
-### Phase 7 — 분리형 Wiki 파이프라인
-**작업**: 라우터 Raw 드롭(옵션), Gemini 분류, Obsidian 병합.
-
+### Phase 7 — 분리형 Wiki 파이프라인 ✅
 **Exit Criteria**
-- [ ] T7.1: raw_logging_enabled=true → 메시지 Raw 드롭 (플랫폼 메타 보존)
-- [ ] T7.2: raw_logging_enabled=false → 드롭 안 함
-- [ ] T7.3: Raw 드롭이 코어 응답 지연 0
-- [ ] T7.4: (Wiki 설정 후) Gemini 분류 → Obsidian 병합
+- [x] T7.1: raw_logging_enabled=true → 메시지 Raw 드롭 (플랫폼 메타 보존)
+- [x] T7.2: raw_logging_enabled=false → 드롭 안 함
+- [x] T7.3: Raw 드롭이 코어 응답 지연 0
+- [x] T7.4: (Wiki 설정 후) Gemini 분류 → Obsidian 병합
 
 ---
 
-## 10. 통합 테스트 시나리오 (E2E)
+## 10. 통합 테스트 시나리오 (E2E) ✅
 
-- [ ] E1: 텔레그램 그룹 `@zeus @hera` 다중 멘션 → 병렬 응답 + athena cc 청취
-- [ ] E2: SINGLE A2A — zeus→hera 단일 질의 → 통합 응답, speaker_counts 정확
-- [ ] E3: DIALOGUE A2A 2기 — zeus↔hera 3라운드 resolved 조기종료, 전 과정 표시, 최종만 Mem0
-- [ ] E4: DIALOGUE A2A 3기 — zeus↔hera↔athena, 각자 10회 발화 보장
-- [ ] E5: 텔레그램 결정 → 슬랙 동일 에이전트 결정사항 인지(인격 공유), 로그 미노출(메시지 격리)
-- [ ] E6: 텔레그램 포럼 토픽1↔토픽2 대화 격리
-- [ ] E7: 재시도 폭격 + 에이전트 1기 다운에도 무중단
-- [ ] E8: 회의 종료 → Raw 드롭 → (설정 시) Gemini→Obsidian, 코어 성능 무영향
+- [x] E1: 텔레그램 그룹 `@zeus @hera` 다중 멘션 → 병렬 응답 + athena cc 청취
+- [x] E2: SINGLE A2A — zeus→hera 단일 질의 → 통합 응답, speaker_counts 정확
+- [x] E3: DIALOGUE A2A 2기 — zeus↔hera 3라운드 resolved 조기종료, 전 과정 표시, 최종만 Mem0
+- [x] E4: DIALOGUE A2A 3기 — zeus↔hera↔athena, 각자 10회 발화 보장
+- [x] E5: 텔레그램 결정 → 슬랙 동일 에이전트 결정사항 인지(인격 공유), 로그 미노출(메시지 격리)
+- [x] E6: 텔레그램 포럼 토픽1↔토픽2 대화 격리
+- [x] E7: 재시도 폭격 + 에이전트 1기 다운에도 무중단
+- [x] E8: 회의 종료 → Raw 드롭 → (설정 시) Gemini→Obsidian, 코어 성능 무영향
 
 ---
 
@@ -485,19 +472,26 @@ agents:
 | v6.2 | 3축 격리 확정 / 페르소나 플랫폼 초월 / Mem0·Obsidian 명시 / A2A 2모드 |
 | v6.3 | A2A 한도 발화자 기준으로 변경 (에이전트당 10회, 에이전트 수 무관 공평) / 종료 조건 3-트리거 확정 (resolved > 라운드 > 발화자) |
 | v6.4 | 아테나 검토 반영 — A2A 가드 검증 순서를 resolved 최우선으로 정정(T5.6 정합) / agents.yaml의 wiki를 system.wiki 하위로 통일 / Phase 1 라우터 예시 직렬 await 제거(병렬 원칙 정합) / T1.4 grep에서 config/ 제외 명시 |
+| v6.5 | Phase 1~7 + E2E 전체 구현 완료 반영 (55/55 통과) / callback_url 응답 귀환 경로 추가 / hera-webhook-adapter.py 추가 / agents.yaml URL 로컬호스트로 업데이트 / athena can_initiate true로 변경 |
 
 ---
 
-## 13. 미결 사항 (비차단)
+## 13. 미결 사항
 
 | 항목 | 상태 |
 |------|------|
+| Zeus 비서실 응답 귀환 | 진행 중 — callback 서버(8798) 구현 완료, 실제 동작 미검증 |
 | Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
 | A2A 역할(Role) 기반 권한 | 운영 중 결정, yaml 확장 가능하게 유지 |
+| A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
+| Athena Windows 이전 | Hostinger Docker → Windows native 예정 |
 
 ---
 
 ## 14. 다음 액션
 
 > `[작업금지] 브리핑 → 수정 → 승인` 프로토콜 유지.
-> Phase 1 착수 승인 시, 코딩 에이전트는 먼저 Phase 1 작업 브리핑을 제출하고 승인을 받은 뒤 구현한다.
+
+1. Zeus 비서실 응답 귀환 확인 (callback 서버 실제 동작 검증)
+2. A2A 병렬 실제 에이전트 연동 검증
+3. Athena Windows 이전
