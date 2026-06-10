@@ -1,6 +1,6 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.6 (Agora 동기화 — 세션ID/발화카운터/워키토키/스푸핑 강화 반영)
+> **버전**: v6.7 (다중 사용자 / 관리 UI 준비 설계 반영)
 > **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / 실제 에이전트 연동 진행 중
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
 > **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
@@ -17,21 +17,23 @@
 4. **작업 프로토콜**: `[작업금지] 브리핑 → 수정 → 승인`. 코드 작성 전 반드시 브리핑하고 승인을 받는다.
 5. **이 문서 우선**: 코드와 이 문서가 충돌하면 이 문서가 정답이다. 구현 중 모순 발견 시 코드를 고치지 말고 이 문서의 갱신을 먼저 제안한다.
 6. **컴포넌트 독립성**: 라우터/어댑터는 Mem0·Obsidian·Gemini 등 외부 지식 인프라와 완전히 독립적이다. 라우터의 유일한 Wiki 접점은 "Raw 폴더에 드롭"(옵션)뿐이다.
+7. **PRD 선행**: 작업 시작 전 이 문서 최신 버전을 확인한다. 설계 변경이 필요하면 코드보다 이 문서를 먼저 갱신한다.
+8. **관리 UI 준비**: 새 코드 작성 시 향후 관리 UI가 붙을 것을 전제한다. 설정·상태·에이전트 정보는 `/admin/*` API로 노출 가능한 구조로 설계한다.
 
 ---
 
 ## 1. 제품 개요 (Product Overview)
 
 ### 1.1 목적
-복수의 AI 에이전트를 여러 메신저 플랫폼(Telegram, Slack, Discord)에서 운영하는 **범용 멀티 플랫폼 AI 조직 운영 인프라**를 구축한다. 운영자가 코딩 없이 에이전트 조직을 경영하듯 운영하는 것이 목표다. 라우터는 메시지를 격리하면서, 에이전트의 인격·지식은 플랫폼을 초월해 일관되게 유지하고, 에이전트 간 협업(A2A)을 안전하게 중개한다.
+복수의 AI 에이전트를 여러 메신저 플랫폼(Telegram, Slack, Discord)에서 운영하는 **범용 멀티 플랫폼 AI 조직 운영 인프라**를 구축한다. 운영자가 코딩 없이 에이전트 조직을 경영하듯 운영하는 것이 목표다.
 
-### 1.2 오케스트레이션 철학
-- **명시적 지시 기반**: "어느 에이전트가 무엇을 하는가"는 운영자(@멘션) 또는 개시 에이전트(A2A)가 결정한다. 라우터는 자동 일 분배를 하지 않는다(Dumb Pipe).
-- 운영자가 직접 유연하게 오케스트레이션한다. 향후 역할(Role) 변경 케이스에 대비해 yaml 구조를 확장 가능하게 유지한다.
+### 1.2 사용자 모델
+- **1:1 DM**: 사용자 1명 ↔ 에이전트 1기. `chat_id === user_id`. 현재 구조 그대로.
+- **그룹/포럼**: N명 사용자 ↔ 에이전트. 응답은 채팅방 전체 공개. 에이전트는 `user_id`로 요청자를 식별해 맥락 파악.
+- **user_id**: 어댑터가 플랫폼 사용자 ID(`from.id`)를 추출해 `payload.user_id`로 항상 포함. 에이전트까지 전달.
 
 ### 1.3 현재 상태
-- Telegram 기반 MVP가 에이전트 3기(Zeus/Hera/Athena)를 통제하며 가동 중 (레퍼런스 환경).
-- 에이전트 3기는 Mem0에 맵핑되어 있다.
+- Telegram 기반 MVP가 에이전트 3기(Zeus/Hera/Athena)를 통제하며 가동 중.
 - Router v2 구현 완료 (55/55 테스트 통과), 실제 에이전트 연동 진행 중.
 
 ### 1.4 비범위 (Out of Scope)
@@ -52,18 +54,19 @@
 | 3-Axis Isolation | 메시지=격리 / 인격=플랫폼 초월 공유 / 지식=플랫폼 초월 공용 |
 | Platform Absolute Isolation | 플랫폼 간 메시지 교차·A2A 절대 차단 |
 | Event-Driven Knowledge | Wiki는 메인 파이프라인과 완전 분리된 비동기 워커 |
-| Router-Owned Limits | A2A 한도(max_speaker_calls, max_rounds)는 라우터가 agents.yaml에서 강제 주입. 에이전트 제출값 무시 |
+| Router-Owned Limits | A2A 한도는 라우터가 agents.yaml에서 강제 주입. 에이전트 제출값 무시 |
+| Admin-UI Ready | 설정·상태는 `/admin/*` API로 노출 가능한 구조. UI는 세팅과 동시에 테스트 가능해야 함 |
 
 ---
 
 ## 3. 시스템 토폴로지 (Topology)
 
 ```
-[ Users ]
+[ Users (1~N명) ]
    |
    v
 [ Universal Adapters ] (Telegram / Slack / Discord ...)   <- Smart Edge
-   |  +- context_key / persona_key 생성
+   |  +- context_key / persona_key / user_id 생성
    |  +- @멘션 / DM / 토픽·스레드 파싱
    |  +- UI 렌더링 (이모지/마크다운, A2A 전 과정 표시)
    v  (Standard JSON Ingress)
@@ -74,6 +77,7 @@
    |  +- Session Store (발화 카운터 서버 보관, TTL 자동 만료)
    |  +- Promise.allSettled 병렬 디스패치
    |  +- callback_url 응답 귀환 경로 (어댑터로 결과 POST)
+   |  +- /admin/* 관리 API (에이전트 CRUD, 상태 조회, dry-run)
    |  +- (옵션) 전 메시지 -> /data/wiki/raw/ 드롭
    |
    +--------------+--------------+
@@ -88,7 +92,14 @@
 ============= Async Boundary (코어 부하 0%) =============
 
 [ /data/wiki/raw/ ] --(watch)--> [ Gemini Wiki Engine ] --> [ Obsidian Unified KB ]
-   (라우터가 드롭)                  (트리거 시점 별도 결정)     (플랫폼 무관 조직 공용)
+
+============= 관리 레이어 (향후) =============
+
+[ Admin UI ] <--> [ /admin/* API ] <--> [ Olympus Router Core ]
+   +- 에이전트 등록/수정/삭제 + 즉시 연결 테스트
+   +- agents.yaml 편집 + dry-run 검증
+   +- 세션/멱등성 스토어 현황 조회
+   +- 에이전트별 헬스 집계 대시보드
 ```
 
 ---
@@ -97,19 +108,16 @@
 
 ### 4.1 축1 — MESSAGE (대화 메시지) · 완전 격리
 - **키**: `{platform}:{space_type}:{space_id}:{topic_or_thread_id}`
-- **규칙**: 모든 방(플랫폼·채널·그룹·DM·토픽)이 서로 격리. 한 방의 대화 로그는 다른 방으로 절대 새지 않는다.
+- **규칙**: 모든 방이 서로 격리. 한 방의 대화 로그는 다른 방으로 절대 새지 않는다.
 
 ### 4.2 축2 — PERSONA (인격·기억) · 플랫폼 초월 공유
-- **키**: `{agent_id}` (Mem0 현재 구조 그대로, 예: `zeus`)
-- **규칙**: 모든 플랫폼·모든 채널에서 동일 인격. 텔레그램의 Zeus = 슬랙의 Zeus = 디스코드의 Zeus.
+- **키**: `{agent_id}` (예: `zeus`)
+- **규칙**: 모든 플랫폼·모든 채널에서 동일 인격.
 - **저장소**: Mem0
 - **중요**: 실제 채팅 로그는 공유되지 않는다. **에이전트의 "기억과 결정사항"만 이어진다.**
-- **근거**: 플랫폼은 언제든 변경 가능한 전제. 지식·기억은 플랫폼과 무관하게 이식되어야 함.
 
 ### 4.3 축3 — KNOWLEDGE (조직 지식) · 플랫폼 초월 공용
 - **저장소**: Obsidian (Gemini가 Raw 분류/정제)
-- **입력**: 라우터가 `data/wiki/raw/`에 드롭 (옵션, 플랫폼 메타데이터는 참고용으로만 보존)
-- **규칙**: 모든 에이전트·모든 플랫폼 공용. 플랫폼 격리 예외(의도적).
 - **접근**: 에이전트는 읽기, 쓰기는 Gemini Wiki 워커 전용.
 
 ### 4.4 격리/공유 매트릭스
@@ -120,17 +128,8 @@
 | 텔레그램 그룹 ↔ DM | 격리 | 공유 | 공유 |
 | 텔레그램 토픽1 ↔ 토픽2 | 격리 | 공유 | 공유 |
 | 텔레그램 ↔ 슬랙 | 격리 | 공유 | 공유 |
-| 텔레그램 ↔ 디스코드 | 격리 | 공유 | 공유 |
 
-### 4.5 합성 규칙
-```
-응답 컨텍스트 = Mem0[{agent_id}]             (플랫폼 초월 인격/기억)
-              + SPACE_MEMORY[{context_key}]  (이 방의 대화 흐름)
-              + Obsidian KB (읽기)           (조직 공용 지식)
-```
-> 라우터는 `memory_scope`로 키만 주입. 합성은 에이전트가 수행(Dumb Pipe 유지).
-
-### 4.6 한 줄 정의
+### 4.5 한 줄 정의
 > **메시지는 방마다 격리, 에이전트는 어디서나 하나.**
 
 ---
@@ -141,110 +140,61 @@
 
 | 플랫폼 | 공간 유형 | 격리 ID | 특이사항 |
 |--------|-----------|---------|---------|
-| Telegram | 일반 그룹 | `chat_id` + `root` | thread 없음 |
-| Telegram | 포럼 토픽 | `chat_id` + `message_thread_id` | `is_forum:true` 판별. General Topic(1) → `root` 정규화. 응답 시 message_thread_id 필수 |
-| Telegram | DM | `chat_id` + `root` | 봇1기=에이전트1 |
+| Telegram | 일반 그룹 | `chat_id` + `root` | |
+| Telegram | 포럼 토픽 | `chat_id` + `message_thread_id` | General Topic(1) → `root` 정규화 |
+| Telegram | DM | `chat_id` + `root` | 봇1기=에이전트1, chat_id===user_id |
 | Slack | 채널 | `channel_id` + `root` | |
-| Slack | 채널 스레드 | `channel_id` + `thread_ts` | 부모 메시지 ts가 스레드 ID |
-| Discord | 일반 채널 | `channel_id` + `root` | API v9+ 필요 |
-| Discord | 포럼/스레드 | `parent_id` + `thread_id` | 스레드 자체가 채널 ID |
-
-**context_key 예시**
-```
-telegram:group:C123:root
-telegram:forum:C123:42
-telegram:dm:U789:root
-slack:channel:C123:171000
-discord:forum:C123:C456
-```
+| Slack | 채널 스레드 | `channel_id` + `thread_ts` | |
+| Discord | 일반 채널 | `channel_id` + `root` | |
+| Discord | 포럼/스레드 | `parent_id` + `thread_id` | |
 
 ---
 
 ## 6. A2A (Agent-to-Agent) 규약
 
 ### 6.1 2-Mode 구조
-모드 결정 주체는 **개시 에이전트**, 기본값은 `single`.
 
 | 모드 | 용도 | 동작 |
 |------|------|------|
-| `single` | 1문1답 (빈번, 기본값) | 호출→응답→즉시 종료. 라운드 없음 |
-| `dialogue` | 티키타카/합의 (가끔) | 라운드 카운트, 조기 종료 가능 |
+| `single` | 1문1답 (기본값) | 호출→응답→즉시 종료 |
+| `dialogue` | 티키타카/합의 | 라운드 카운트, 조기 종료 가능 |
 
-### 6.2 종료 조건 — 3가지 트리거 (먼저 충족되는 것이 우선)
-
+### 6.2 종료 조건 (우선순위 순서)
 ```
-우선순위 순서:
-
-1. resolved/out  에이전트가 "결론 났음" 선언      (가장 이상적, 조기종료)
-2. round > 10    라운드 한도 도달 (dialogue만)    (결론 못 낸 경우)
-3. speaker > 10  특정 에이전트 발화 한도 초과     (한 에이전트 독주 방어)
-                 → 해당 에이전트만 개시 불가, 체인 자연 종료
+1. resolved/out  에이전트 결론 선언 (최우선, 조기종료)
+2. round > 10    라운드 한도 (dialogue만)
+3. speaker > 10  발화자 한도 (SINGLE/DIALOGUE 공통)
 ```
 
-> **발화자 기준 10회**: 에이전트 수에 관계없이 각자 공평하게 10회.
-> SINGLE 무한 연쇄도 동일 규칙으로 자연 방어(별도 하드캡 불필요).
-
-**over/out/resolved 신호 (워키토키 프로토콜)**
+**워키토키 프로토콜 (`a2a_status`)**
 ```
-에이전트 응답의 a2a_status 필드:
-- "resolved" : 합의 완료, 세션 정상 종료 (최우선)
-- "out"      : resolved와 동일 효력 (에이전트가 선택적으로 사용 가능)
-- undefined  : 계속 진행 (WARNING 로그 기록)
-- "continue" : 계속 진행 (명시적)
+"resolved" / "out" → 세션 종료 (동일 효력)
+"continue" / undefined → 진행 계속
 ```
-> 워키토키 비유: resolved/out = "오버, 아웃". 신호 없으면 라운드 한도까지 진행.
 
-### 6.3 세션 ID & 발화 카운터 (Session-Gated Counter)
+### 6.3 세션 ID & 발화 카운터
 
-**세션 ID 생성 (라우터 책임, SSOT)**
-- 에이전트가 `a2a.session_id`를 제출하면 그대로 사용
-- 없으면 라우터가 자동 생성: `legacy:{platform}:{context_key}:{origin_agent}`
-- 세션 ID는 라우터가 생성하는 유일한 식별자. 에이전트는 수신 후 이후 요청에 포함만 하면 됨
-
-**발화 카운터 (Session Store)**
-- 라우터가 `session_store.js`에서 직접 발화 횟수 보관 (서버 메모리)
-- TTL: 기본 1시간 (`system.a2a.session_ttl_ms`로 설정 가능), 만료 시 자동 삭제
-- 에이전트가 보낸 `speaker_counts`는 세션 초기화 시에만 참조. 이후에는 라우터 보관값이 SSOT
-- `max_speaker_calls`, `max_rounds`도 라우터가 `agents.yaml`에서 강제 주입 (에이전트 제출값 무시)
-
-```
-핵심: 에이전트는 한도를 조작할 수 없다. 라우터가 유일한 카운터 관리자.
-```
+- **session_id**: 라우터가 생성하는 SSOT. 에이전트 제출 시 그대로 사용, 없으면 자동 생성: `legacy:{platform}:{context_key}:{origin_agent}`
+- **session_store**: 라우터 서버 메모리. TTL 기본 1시간. 만료 시 자동 삭제.
+- **limits**: `max_speaker_calls`, `max_rounds` 모두 라우터가 `agents.yaml`에서 강제 주입. 에이전트 제출값 무시.
 
 ### 6.4 호출/응답/기록 규칙
 
-| 역할 | 응답 | SPACE 청취 | Mem0(PERSONA) 기록 |
-|------|:---:|:---:|------|
-| `to` (호출 대상) | 가능 | - | **최종 결론만** (resolved / single 응답) |
-| `cc` (배경) | **금지** | **매 라운드** | 미기록 |
-| 개시자 | 결과 통합 후 단일 반환 | - | 최종 결론 기록 |
+| 역할 | 응답 | Mem0 기록 |
+|------|:---:|------|
+| `to` | 가능 | 최종 결론만 |
+| `cc` | 금지 | 미기록 |
 
-- DIALOGUE 중간 라운드 발언: SPACE(대화 로그)에만, Mem0 미기록.
-- cc는 매 라운드 청취하지만 게시·기록 안 함.
-
-### 6.5 사용자 노출
-A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 발언 + 최종 결론.
-
-### 6.6 권한 & 가드 (검증 순서)
+### 6.5 권한 & 가드 (검증 순서)
 ```
-1. 자기호출     (공통): self-call 금지
-2. 권한         (공통): can_initiate, allowed_targets
-3. 교차플랫폼   (공통): cross-platform 절대 차단
-4. 스푸핑 방지  (공통): payload._source_url 필수, URL origin ↔ registry url 정확 대조
-5. 조기종료     (dialogue): a2a_status == "resolved" 또는 "out" → 즉시 정상 종료 (최우선)
-6. 라운드 한도  (dialogue): round <= max_rounds (라우터 yaml 기준)
-7. 발화자 한도  (공통): session_store 카운터 <= max_speaker_calls (라우터 yaml 기준)
+1. 자기호출 금지
+2. can_initiate, allowed_targets 검증
+3. 교차플랫폼 차단
+4. _source_url 스푸핑 검증 (누락 즉시 A2A_SPOOF_DETECTED)
+5. resolved/out 조기종료 (최우선)
+6. 라운드 한도 (dialogue)
+7. 발화자 한도 (session_store 기준)
 ```
-
-> **스푸핑 방지 강화**: A2A 재진입 요청은 반드시 `payload._source_url`을 포함해야 한다.
-> `_source_url`의 URL origin이 registry에 등록된 caller URL의 origin과 일치하지 않으면 `A2A_SPOOF_DETECTED`.
-> `_source_url` 누락도 즉시 `A2A_SPOOF_DETECTED`.
-
-> resolved를 발화자/라운드 한도보다 먼저 체크한다. 합의가 끝났는데 한도 에러로 처리되는 것을 방지(T5.6).
-
-### 6.7 반환 모델
-**모델 A (개시자 통합)**: A2A 결과는 개시 에이전트가 받아 통합해 단일 결과로 어댑터에 반환. 라우터는 상태 비보유.
-세션 종료(resolved/out) 시 라우터가 session_store에서 해당 세션 즉시 삭제.
 
 ---
 
@@ -255,19 +205,19 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
 {
   "context_key": "telegram:forum:C123:42",
   "routing": { "to": ["zeus"], "cc": ["athena"] },
-  "memory_scope": {
-    "space_key": "telegram:forum:C123:42",
-    "persona_key": "zeus"
-  },
+  "memory_scope": { "space_key": "telegram:forum:C123:42", "persona_key": "zeus" },
   "payload": {
     "origin_platform": "telegram",
     "text": "@zeus 검토해줘",
-    "raw": {}
+    "user_id": "123456789",
+    "username": "incue"
   },
   "a2a": { "enabled": false },
   "idempotency_key": "telegram:C123:42:msg_001"
 }
 ```
+> `user_id`: 어댑터가 항상 포함. DM은 `chat_id === user_id`. 그룹은 요청자 식별용.
+> 응답 귀환: DM은 `user_id`로, 그룹/포럼은 `chat_id`(방 전체)로.
 
 ### 7.2 A2A Envelope — SINGLE
 ```json
@@ -277,6 +227,7 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
   "payload": {
     "origin_platform": "telegram",
     "text": "예산 잔액 알려줘",
+    "user_id": "123456789",
     "_source_url": "http://127.0.0.1:9001"
   },
   "a2a": {
@@ -289,8 +240,6 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
   }
 }
 ```
-> `max_speaker_calls`, `max_rounds`는 라우터가 agents.yaml에서 주입. 에이전트가 보내도 무시.
-> `_source_url`은 A2A 재진입 시 필수. 누락 시 `A2A_SPOOF_DETECTED`.
 
 ### 7.3 A2A Envelope — DIALOGUE
 ```json
@@ -300,6 +249,7 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
   "payload": {
     "origin_platform": "telegram",
     "text": "서버 증설 함께 결정하자",
+    "user_id": "123456789",
     "_source_url": "http://127.0.0.1:9001"
   },
   "a2a": {
@@ -315,20 +265,7 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
 }
 ```
 
-### 7.4 Agent 응답 — 워키토키 신호
-```json
-{
-  "ok": true,
-  "response_text": "예산안 검토 완료...",
-  "a2a_status": "resolved",
-  "activities": [
-    { "tool": "terminal", "detail": "kubectl get pods" }
-  ]
-}
-```
-> `a2a_status`: `"resolved"` 또는 `"out"` → 세션 종료. 미포함 또는 `"continue"` → 진행.
-
-### 7.5 Egress Envelope (Core -> Adapter)
+### 7.4 Egress Envelope (Core -> Adapter)
 ```json
 {
   "ok": true,
@@ -339,32 +276,28 @@ A2A **전 과정**을 사용자에게 표시(어댑터 렌더링). 라운드별 
       "status": "success",
       "response_text": "예산안 검토 완료...",
       "a2a_status": "resolved",
-      "activities": [
-        { "tool": "terminal", "detail": "kubectl get pods" },
-        { "tool": "write_file", "detail": "budget.md" }
-      ],
+      "activities": [{ "tool": "terminal", "detail": "kubectl get pods" }],
       "_meta": { "persona_key": "hera" }
     }
   ],
   "a2a_termination": {
     "reason": "resolved",
     "rounds_used": 2,
-    "max_rounds": 10,
     "speaker_counts": { "zeus": 2, "hera": 2 }
   }
 }
 ```
 
-### 7.6 config/agents.yaml (단일 진실 공급원)
+### 7.5 config/agents.yaml
 ```yaml
 system:
   a2a:
-    max_speaker_calls: 10      # 발화자별 개인 한도 (SINGLE/DIALOGUE 공통, 라우터 강제 적용)
-    max_rounds: 10             # DIALOGUE 라운드 한도 (라우터 강제 적용)
-    default_mode: "single"     # 모드 기본값
+    max_speaker_calls: 10
+    max_rounds: 10
+    default_mode: "single"
     allow_self_call: false
     allow_cross_platform: false
-    session_ttl_ms: 3600000    # 세션 TTL (기본 1시간, 만료 시 자동 삭제)
+    session_ttl_ms: 3600000
   wiki:
     raw_logging_enabled: false
     raw_path: "data/wiki/raw/"
@@ -372,131 +305,101 @@ system:
 agents:
   - id: "zeus"
     url: "http://127.0.0.1:9001"
-    a2a: { can_initiate: true,  allowed_targets: "*" }
-
+    a2a: { can_initiate: true, allowed_targets: "*" }
   - id: "hera"
     url: "http://127.0.0.1:9002"
-    a2a: { can_initiate: true,  allowed_targets: "*" }
-
+    a2a: { can_initiate: true, allowed_targets: "*" }
   - id: "athena"
     url: "http://127.0.0.1:9003"
     a2a: { can_initiate: true, allowed_targets: "*" }
 ```
-> `allowed_targets`: `"*"`=전체 / `[]`=수신전용 / `["id"]`=지정.
 
 ---
 
-## 8. 외부 지식 인프라 (참고 — 라우터/어댑터와 독립)
+## 8. 관리 UI 준비 설계 (Admin-UI Ready)
+
+향후 라우터·어댑터 설정 및 관리용 UI를 붙일 것을 전제한다.
+**원칙: 세팅하면서 바로 테스트할 수 있어야 한다.**
+
+### 8.1 Admin API 네임스페이스 (`/admin/*`)
+
+지금 당장 구현하지 않더라도, 신규 코드 작성 시 아래 엔드포인트를 붙일 수 있는 구조로 설계한다.
+
+| 엔드포인트 | 용도 |
+|-----------|------|
+| `GET /admin/agents` | 등록된 에이전트 목록 + 헬스 상태 집계 |
+| `POST /admin/agents` | 에이전트 등록 (yaml 반영) |
+| `PUT /admin/agents/:id` | 에이전트 수정 |
+| `DELETE /admin/agents/:id` | 에이전트 삭제 |
+| `POST /admin/agents/:id/test` | **연결 테스트** — 저장 전 헬스체크 + ping |
+| `POST /admin/dry-run` | **라우팅 dry-run** — 실제 전송 없이 라우팅 경로·에이전트 연결 검증 |
+| `GET /admin/sessions` | 현재 활성 A2A 세션 목록 |
+| `GET /admin/status` | 전체 컴포넌트 상태 (router/gateway/agents) |
+
+### 8.2 Dry-run 엔드포인트 규격
+
+```json
+// POST /admin/dry-run
+// Request
+{
+  "envelope": { ... },   // 테스트할 엔벨롭
+  "options": { "check_health": true }
+}
+
+// Response
+{
+  "ok": true,
+  "routing_resolved": { "to": ["zeus"], "cc": ["athena"] },
+  "agent_health": {
+    "zeus":   { "reachable": true,  "latency_ms": 12 },
+    "athena": { "reachable": false, "error": "ECONNREFUSED" }
+  },
+  "would_dispatch": true,
+  "warnings": ["athena is unreachable — cc will silently fail"]
+}
+```
+
+### 8.3 설계 원칙
+
+- **민감값 분리**: 토큰·시크릿은 yaml이 아닌 env로만. Admin API가 yaml을 읽고 쓸 수 있어도 민감값은 노출하지 않는다.
+- **세팅 즉시 테스트**: URL 입력 → 저장 전 `/admin/agents/:id/test` 자동 호출. 실패 시 저장 불가.
+- **상태 가시성**: session_store, idempotency_store 현재 상태를 Admin API로 조회 가능.
+- **registry 런타임 재로드**: agents.yaml 변경 시 재시작 없이 반영 가능한 구조 유지.
+
+---
+
+## 9. 외부 지식 인프라 (참고 — 라우터/어댑터와 독립)
 
 | 컴포넌트 | 역할 | 비고 |
 |----------|------|------|
 | Mem0 | PERSONA(인격/기억), `agent_id` 키 | 에이전트가 직접 연동 |
 | 라우터 Raw 드롭 | 전 메시지 → `data/wiki/raw/` | 옵션(yaml 토글) |
-| Gemini Wiki Engine | Raw 분류/정제 | 트리거 시점 별도 결정(비차단) |
+| Gemini Wiki Engine | Raw 분류/정제 | 트리거 시점 별도 결정 |
 | Obsidian | 조직 공용 지식 저장 | 플랫폼 무관 |
 
 ---
 
-## 9. 단계별 구현 계획 (Phased Plan + Test Gates)
+## 10. 단계별 구현 계획 (Phased Plan + Test Gates)
 
-각 Phase는 Exit Criteria를 100% 통과해야 다음으로 진행.
+### Phase 0~7 ✅ (완료)
+Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 
-### Phase 0 — 설계 확정 ✅
-- [x] 3축 격리 모델 확정
-- [x] A2A 2모드 + 발화자 기준 한도 확정
-- [x] 종료 조건 3-트리거 확정
-- [x] 페르소나 플랫폼 초월 공유 확정 (Mem0 agent_id)
-- [x] 플랫폼별 토픽/스레드 격리 규격 확정
-- [x] 세션ID/발화카운터/워키토키/스푸핑 강화 확정 (v6.6)
+### Phase 8 — Agora 동기화 (미구현)
+- [ ] T5.17: session_id 없으면 라우터가 자동 생성
+- [ ] T5.18: 발화 카운터를 session_store에서 관리
+- [ ] T5.19: `a2a_status:"out"` → resolved와 동일 처리
+- [ ] T5.20: max_speaker_calls/max_rounds agents.yaml 강제 교체
+- [ ] T5.21: `_source_url` 누락 → `A2A_SPOOF_DETECTED`
+- [ ] T5.22: session TTL 만료 시 자동 삭제
 
-### Phase 1 — 코어 철거 & 동적 레지스트리 ✅
-**Exit Criteria**
-- [x] T1.1: yaml 에이전트 3기 → registry 3개 로드
-- [x] T1.2: yaml에 4번째 추가 → 코드 무수정으로 4개 로드
-- [x] T1.3: 존재하지 않는 `to:["ghost"]` → `UNKNOWN_AGENT`
-- [x] T1.4: 코드 전체 grep, 에이전트 이름 하드코딩 0건
-- [x] T1.5: 유효 단일 `to` → 해당 URL 패스스루 성공
-
-### Phase 2 — 논블로킹 병렬 실행 엔진 ✅
-**Exit Criteria**
-- [x] T2.1: `to:[A,B,C]` 병렬 (총시간 ≈ 최장 1개)
-- [x] T2.2: A 타임아웃 → B,C 정상 (장애 격리)
-- [x] T2.3: `cc:[D]` → 응답 대기 없이 즉시 반환
-- [x] T2.4: cc D 다운 → 메인 영향 0
-- [x] T2.5: 실패 `status:"error"`, 성공 `status:"success"`
-
-### Phase 3 — 유니버셜 스마트 어댑터 ✅
-**Exit Criteria**
-- [x] T3.1: 텔레그램 DM → `space_type=dm`, to=봇1기
-- [x] T3.2: 텔레그램 그룹 `@hera` → `to:[hera]`, `cc:[나머지]`
-- [x] T3.3: 멘션 없는 그룹 → `to:[]`, 전원 cc
-- [x] T3.4: 포럼 토픽 → `telegram:forum:C:42`, 토픽1↔토픽2 격리
-- [x] T3.5: General Topic(1) → `root` 정규화
-- [x] T3.6: 슬랙 thread_ts / 디스코드 thread_id 정확 추출
-- [x] T3.7: persona_key = `{agent_id}` (플랫폼 prefix 없음)
-- [x] T3.8: activities → 이모지 렌더링
-- [x] T3.9: 어댑터 코드 에이전트 이름 하드코딩 0건
-
-### Phase 4 — 메모리 스코프 주입 (3축) ✅
-**Exit Criteria**
-- [x] T4.1: 그룹A 대화 → 그룹B에 raw 로그 미노출 (MESSAGE 격리)
-- [x] T4.2: 슬랙 에이전트가 텔레그램 결정사항 인지 (PERSONA 공유)
-- [x] T4.3: 슬랙 에이전트가 텔레그램 대화 로그는 미인지 (MESSAGE 격리)
-- [x] T4.4: persona_key = `{agent_id}` (플랫폼 무관)
-- [x] T4.5: cc 참여 시 persona 미기록
-
-### Phase 5 — A2A 협업 엔진 (2모드 + 발화자 한도) ✅
-**Exit Criteria**
-- [x] T5.1: SINGLE zeus→hera → 즉시 종료, speaker_counts[zeus]: 1
-- [x] T5.2: SINGLE 연쇄 — zeus 11번째 발화 → `A2A_SPEAKER_LIMIT_EXCEEDED` (10까지만)
-- [x] T5.3: 3기 DIALOGUE — 각자 10회씩 발화 가능, 전원 10라운드 도달 ✅
-- [x] T5.4: DIALOGUE 11라운드 → `A2A_ROUND_LIMIT_EXCEEDED`
-- [x] T5.5: DIALOGUE 중 `status:"resolved"` → 라운드·발화 한도 전 조기종료
-- [x] T5.6: resolved가 발화 한도·라운드보다 먼저 체크됨 확인
-- [x] T5.7: `can_initiate:false` A2A → `A2A_INITIATION_DENIED`
-- [x] T5.8: `allowed_targets` 위반 → `A2A_UNAUTHORIZED`
-- [x] T5.9: 자기 호출 → `A2A_SELF_CALL`
-- [x] T5.10: telegram→slack A2A → `A2A_CROSS_PLATFORM_DENIED`
-- [x] T5.11: cc의 A2A 개시 → 차단
-- [x] T5.12: 위조 caller 재진입 → `A2A_SPOOF_DETECTED` (`_source_url` 누락 또는 불일치)
-- [x] T5.13: DIALOGUE 중간 라운드 → SPACE만 기록, Mem0 미기록
-- [x] T5.14: DIALOGUE resolved → 최종 결론만 Mem0 기록
-- [x] T5.15: cc가 DIALOGUE 매 라운드 청취 (게시·기록 없음)
-- [x] T5.16: 모드 미지정 → 기본값 single 적용
-
-> **미구현 (v6.6 추가 요건):**
-> - [ ] T5.17: session_id 없으면 라우터가 자동 생성하여 엔벨롭에 주입
-> - [ ] T5.18: 발화 카운터를 session_store에서 관리 (에이전트 제출값 아님)
-> - [ ] T5.19: `a2a_status:"out"` → resolved와 동일하게 세션 종료
-> - [ ] T5.20: max_speaker_calls/max_rounds는 agents.yaml 값으로 강제 교체 (에이전트 제출 무시)
-> - [ ] T5.21: `_source_url` 누락 → `A2A_SPOOF_DETECTED`
-> - [ ] T5.22: session TTL 만료 시 session_store 자동 삭제
-
-### Phase 6 — 멱등성 & 장애 격리 ✅
-**Exit Criteria**
-- [x] T6.1: 동일 message_id 재전송 → `202 Accepted` 무시
-- [x] T6.2: Wiki 워커 다운 → 메인 라우팅 정상
-- [x] T6.3: 1000건 동시 인입 → 코어 블로킹 없음
-
-### Phase 7 — 분리형 Wiki 파이프라인 ✅
-**Exit Criteria**
-- [x] T7.1: raw_logging_enabled=true → 메시지 Raw 드롭 (플랫폼 메타 보존)
-- [x] T7.2: raw_logging_enabled=false → 드롭 안 함
-- [x] T7.3: Raw 드롭이 코어 응답 지연 0
-- [x] T7.4: (Wiki 설정 후) Gemini 분류 → Obsidian 병합
-
----
-
-## 10. 통합 테스트 시나리오 (E2E) ✅
-
-- [x] E1: 텔레그램 그룹 `@zeus @hera` 다중 멘션 → 병렬 응답 + athena cc 청취
-- [x] E2: SINGLE A2A — zeus→hera 단일 질의 → 통합 응답, speaker_counts 정확
-- [x] E3: DIALOGUE A2A 2기 — zeus↔hera 3라운드 resolved 조기종료, 전 과정 표시, 최종만 Mem0
-- [x] E4: DIALOGUE A2A 3기 — zeus↔hera↔athena, 각자 10회 발화 보장
-- [x] E5: 텔레그램 결정 → 슬랙 동일 에이전트 결정사항 인지(인격 공유), 로그 미노출(메시지 격리)
-- [x] E6: 텔레그램 포럼 토픽1↔토픽2 대화 격리
-- [x] E7: 재시도 폭격 + 에이전트 1기 다운에도 무중단
-- [x] E8: 회의 종료 → Raw 드롭 → (설정 시) Gemini→Obsidian, 코어 성능 무영향
+### Phase 9 — 다중 사용자 & Admin UI 준비 (미구현)
+- [ ] T9.1: 어댑터가 `payload.user_id` 항상 추출·포함
+- [ ] T9.2: DM 응답은 `user_id`로, 그룹 응답은 `chat_id`(전체)로
+- [ ] T9.3: `GET /admin/agents` — 에이전트 목록 + 헬스 집계
+- [ ] T9.4: `POST /admin/agents/:id/test` — 저장 전 연결 테스트
+- [ ] T9.5: `POST /admin/dry-run` — 라우팅 경로 + 에이전트 연결 검증
+- [ ] T9.6: `GET /admin/sessions` — 활성 A2A 세션 목록
+- [ ] T9.7: `GET /admin/status` — 전체 컴포넌트 상태
 
 ---
 
@@ -506,18 +409,15 @@ agents:
 |------|------|
 | context_key | 대화 공간 고유 식별자, 메시지 격리축 |
 | persona_key | `{agent_id}`, 인격/기억 식별자, 플랫폼 초월 공유 |
-| session_id | A2A 세션 고유 식별자. 라우터가 생성하는 SSOT. `legacy:{platform}:{context_key}:{origin_agent}` 형식 |
+| user_id | 플랫폼 사용자 고유 ID. 어댑터가 추출해 payload에 포함. 에이전트 맥락 파악용 |
+| session_id | A2A 세션 식별자. 라우터 SSOT. `legacy:{platform}:{context_key}:{origin_agent}` |
 | session_store | 라우터 서버 메모리의 발화 카운터 보관소. TTL 자동 만료 |
-| speaker_counts | 발화자별 개인 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
-| over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 선언 |
-| _source_url | A2A 재진입 시 caller가 반드시 포함해야 하는 자신의 URL. 스푸핑 방지용 |
+| speaker_counts | 발화자별 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
+| over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 |
+| _source_url | A2A 재진입 시 caller 필수 포함 URL. 스푸핑 방지용 |
+| dry-run | 실제 전송 없이 라우팅 경로·에이전트 연결만 검증하는 테스트 모드 |
 | to | 응답 의무가 있는 호출 대상 |
-| cc | 청취만 하는 배경 참여자 (게시·기록 금지, 매 라운드 청취) |
-| A2A SINGLE | 1문1답 즉시 종료 모드 (기본값) |
-| A2A DIALOGUE | 티키타카 (최대 10라운드, resolved/out 조기종료) |
-| resolved | 에이전트의 결론 선언 신호 (최우선 조기종료 트리거) |
-| Mem0 | PERSONA 저장소 (인격/기억, agent_id 키) |
-| Obsidian | 조직 공용 지식 저장소 (Gemini 분류) |
+| cc | 청취만 하는 배경 참여자 |
 | Dumb Pipe | 파싱·로직 없는 순수 라우팅 코어 |
 | Smart Edge | 파싱·렌더링 담당 어댑터 |
 | SSOT | 단일 진실 공급원 (이 문서 + agents.yaml) |
@@ -532,8 +432,8 @@ agents:
 | `A2A_INITIATION_DENIED` | can_initiate:false 에이전트가 A2A 시도 |
 | `A2A_UNAUTHORIZED` | allowed_targets 위반 |
 | `A2A_SELF_CALL` | 자기 자신 호출 |
-| `A2A_CROSS_PLATFORM_DENIED` | 플랫폼 간 A2A (절대 차단) |
-| `A2A_SPOOF_DETECTED` | `_source_url` 누락 또는 registry URL과 origin 불일치 |
+| `A2A_CROSS_PLATFORM_DENIED` | 플랫폼 간 A2A |
+| `A2A_SPOOF_DETECTED` | `_source_url` 누락 또는 origin 불일치 |
 | `A2A_SPEAKER_LIMIT_EXCEEDED` | 발화자 10회 초과 |
 | `A2A_ROUND_LIMIT_EXCEEDED` | DIALOGUE 10라운드 초과 |
 | `A2A_EARLY_TERMINATION` | resolved/out 정상 조기종료 |
@@ -546,11 +446,12 @@ agents:
 |------|-----------|
 | v6.0 | 초기 V6 (Dumb Pipe, 병렬, Wiki 분리) |
 | v6.1 | A2A count 방식 / 범용성 강화 / 메모리 2축 |
-| v6.2 | 3축 격리 확정 / 페르소나 플랫폼 초월 / Mem0·Obsidian 명시 / A2A 2모드 |
-| v6.3 | A2A 한도 발화자 기준으로 변경 (에이전트당 10회, 에이전트 수 무관 공평) / 종료 조건 3-트리거 확정 (resolved > 라운드 > 발화자) |
-| v6.4 | 아테나 검토 반영 — A2A 가드 검증 순서를 resolved 최우선으로 정정(T5.6 정합) / agents.yaml의 wiki를 system.wiki 하위로 통일 |
-| v6.5 | Phase 1~7 + E2E 전체 구현 완료 반영 (55/55 통과) / callback_url 응답 귀환 경로 추가 / hera-webhook-adapter.py 추가 |
-| v6.6 | Agora Router 동기화 — 세션ID(라우터 SSOT) / Session Store(발화카운터 서버보관, TTL) / 워키토키 프로토콜(over/out 신호) / 스푸핑 방지 강화(_source_url 필수) / 라우터 limits 강제 주입 / T5.17~T5.22 미구현 요건 명시 / 에러코드 목록 섹션 추가 |
+| v6.2 | 3축 격리 확정 / 페르소나 플랫폼 초월 / A2A 2모드 |
+| v6.3 | A2A 한도 발화자 기준 / 종료 조건 3-트리거 확정 |
+| v6.4 | A2A 가드 resolved 최우선 정정 / agents.yaml wiki 통일 |
+| v6.5 | Phase 1~7 + E2E 완료 / callback_url 응답 귀환 / hera-webhook-adapter |
+| v6.6 | Agora 동기화 — 세션ID/Session Store/워키토키/스푸핑 강화/limits 강제 주입 |
+| v6.7 | 다중 사용자(user_id) / Admin UI 준비 설계(8절) / Phase 9 추가 / PRD 선행 원칙 추가 |
 
 ---
 
@@ -558,12 +459,12 @@ agents:
 
 | 항목 | 상태 |
 |------|------|
-| T5.17~T5.22 구현 | 미완 — session_store, _source_url 강제, out 신호, limits 강제주입 코드 포팅 필요 |
-| Zeus 비서실 응답 귀환 | 진행 중 — callback 서버(8798) 구현 완료, 실제 동작 미검증 |
-| Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
-| A2A 역할(Role) 기반 권한 | 운영 중 결정, yaml 확장 가능하게 유지 |
+| Phase 8 (T5.17~T5.22) | 미완 — Agora session-store 포팅 필요 |
+| Phase 9 (user_id, Admin API) | 미완 — 설계 확정, 구현 대기 |
+| Zeus 비서실 응답 귀환 | 진행 중 — callback 서버(8798) 실제 동작 미검증 |
 | A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
 | Athena Windows 이전 | Hostinger Docker → Windows native 예정 |
+| Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
 
 ---
 
@@ -571,7 +472,7 @@ agents:
 
 > `[작업금지] 브리핑 → 수정 → 승인` 프로토콜 유지.
 
-1. **T5.17~T5.22 구현** — Agora의 session-store.js 포팅 + a2a-guard.js/_source_url 강제 + out 신호 처리
-2. Zeus 비서실 응답 귀환 확인 (callback 서버 실제 동작 검증)
-3. A2A 병렬 실제 에이전트 연동 검증
-4. Athena Windows 이전
+1. **Phase 8** — Agora session-store.js 포팅 + _source_url 강제 + out 신호
+2. **Zeus 비서실** — callback 서버 실제 동작 검증
+3. **Phase 9** — user_id 어댑터 추출 + Admin API 기초 구현
+4. **Athena Windows 이전**
