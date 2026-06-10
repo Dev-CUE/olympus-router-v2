@@ -1,8 +1,8 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.10 (상용화 골격 — 에이전트 SDK 계약 / 멀티테넌시 키 확장 / 온보딩 흐름)
+> **버전**: v6.11 (Google A2A 표준 호환성 결정 사항 반영)
 > **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / Phase 8~10 미구현
-> **다음 메이저**: v7.0은 Pull 통신모델이 코드로 실제 전환되는 시점(Phase 10 구현 착수)에 부여한다. v6.5~v6.9는 문서상 설계 변경이며 코드는 아직 옛 구조다.
+> **다음 메이저**: v7.0은 Pull 통신모델이 코드로 실제 전환되는 시점(Phase 10 구현 착수)에 부여한다. v6.5~v6.10은 문서상 설계 변경이며 코드는 아직 옛 구조다.
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
 > **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
 
@@ -71,6 +71,8 @@
 | Agent SDK Contract (v6.10) | 에이전트는 폴링/토큰/result를 직접 짜지 않는다. SDK가 프로토콜을 감춘다 |
 | Tenant-Ready Keys (v6.10) | 모든 격리 키는 향후 `tenant_id` prefix 확장이 가능하게 설계한다(지금은 단일 테넌트) |
 
+> **Olympus A2A와 Google A2A 표준의 관계 (v6.11)**: Olympus A2A는 독자 설계 규격(DIALOGUE/SINGLE 모드, 발화자 한도, resolved/out 신호 등)이다. Google이 2025년 4월 발표하고 Linux Foundation에 이관한 [Agent2Agent(A2A) 프로토콜](https://a2a-protocol.org)과는 별개다. Olympus 내부 에이전트 간 통신에는 영향 없음. **외부 에이전트(타 벤더·타 프레임워크)와 연동이 필요해질 경우**, Google A2A 호환 레이어(Agent Card 노출 + Task 위임 수신) 도입을 검토한다. 현재는 보류(14절 미결 사항 참조).
+
 > **Stateless 완화 명시**: 기존 "Stateless Ultra-Thin Core (상태 0%)"는 롱폴링 채택으로 폐기되고 "Thin Core with Job Queue"로 대체된다. 라우터는 에이전트별 일감 큐(단기 상태)를 보유한다. 단 텍스트 파싱·LLM 호출·의도 분석 금지는 그대로 유지된다(Dumb Pipe의 본질).
 
 ---
@@ -112,6 +114,9 @@
 
 ============= 관리 레이어 (향후) =============
 [ Admin UI ] <--> [ /admin/* API ] <--> [ Olympus Router Core ]
+
+============= 외부 연동 (보류, v6.11 미결) =============
+[ 외부 에이전트 (타 벤더/프레임워크) ] <--? Google A2A 호환 레이어 ?--> [ Olympus Router ]
 ```
 
 ---
@@ -475,6 +480,7 @@ client.stop()
 ### 9-A.3 참조 구현 & 호환
 - 참조 구현 언어: **Node.js** (1차). 라우터와 동일 스택.
 - 타 언어(Python 등)는 본 계약(폴링·헤더·result·_source_url)을 준수하면 호환. SDK 없이 직접 HTTP로도 동일 동작 가능(SDK는 편의 레이어일 뿐, 필수 아님).
+- **(v6.11 확장 여지)** SDK는 향후 Google A2A Agent Card 노출 인터페이스(`/.well-known/agent.json`)를 선택적으로 추가할 수 있는 구조로 설계한다. 단 현재 구현 대상 아님(14절 미결 사항).
 
 ---
 
@@ -592,6 +598,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | Agent SDK | (v6.10) 폴링·토큰·result·_source_url을 감추는 에이전트측 편의 레이어. 필수 아님(직접 HTTP 가능) |
 | tenant_id | (v6.10) 향후 멀티테넌시용 격리 prefix. 현재 미사용, 키 확장 자리만 예약 |
 | 온보딩 | (v6.10) 에이전트 등록→토큰 발급→SDK 주입→폴링 확인 흐름 |
+| Google A2A | (v6.11) Google/Linux Foundation의 벤더 중립 에이전트 간 표준 프로토콜. Olympus A2A(내부 독자 규격)와 별개. 외부 연동 시 호환 레이어 검토 예정 |
 | speaker_counts | 발화자별 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
 | over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 |
 | _source_url | A2A 재진입 시 caller 필수 포함 URL. 스푸핑 방지용 |
@@ -636,6 +643,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.8 | **대규모 설계 전환** — 라우터+어댑터 VPS Docker 이전 / push→pull(롱폴링) 통신모델 / 에이전트 등록 토큰 / 결과 귀환 `/result` 통일(callback 8798 폐기) / Stateless 0% → Thin Core with Job Queue 완화 / SSH·Tunnel 역방향 등 에이전트측 inbound 폐기 / Phase 10 추가 / 확정결정 5건 번복(16절) |
 | v6.9 | Raw 저장 백엔드 추상화(raw-sink) — file 기본 / sqlite 옵션. DB 1순위 SQLite(서버리스), PostgreSQL·NoSQL은 향후 가능성. node:sqlite 우선·외부의존 별도승인. Phase 7에 T7.5/T7.6 추가. 다음 메이저 v7.0은 Pull 코드 구현 시점 명시 |
 | v6.10 | 상용화 골격 — 에이전트 SDK 계약(9-A, 규격만) / 멀티테넌시 키 확장 최소반영(9-B, tenant_id 자리만 예약·본격설계 아님) / 온보딩 흐름(9-C) / Phase 11(T11.1~T11.7) 추가. 원칙표에 Agent SDK Contract·Tenant-Ready Keys 추가. 에러코드에 UNKNOWN_JOB·UNAUTHORIZED_POLL 정합 / Admin에 토큰 재발급 엔드포인트 추가 |
+| v6.11 | Google A2A 표준 호환성 결정 사항 반영 — Olympus A2A(독자 규격)와 Google A2A(Linux Foundation 표준) 관계 명시. 외부 연동 시 호환 레이어 검토 보류. SDK 9-A에 Agent Card 확장 여지 명시. 14절 미결에 Google A2A 항목 추가. 토폴로지에 외부 연동 레이어 표시. 용어집에 Google A2A 항목 추가 |
 
 ---
 
@@ -647,13 +655,14 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | Phase 9 (user_id, Admin API) | 미완 — 설계 확정, 구현 대기 |
 | Phase 10 (Pull 통신 전환) | 미완 — v6.8 신규, 구현 대기 |
 | Phase 11 (상용화 골격) | 미완 — SDK·멀티테넌시 키·온보딩. 단 코드 우선순위는 Phase 8~10(실구현·보안) 이후 |
-| 하위 문서 정합화 | 완료 — CLAUDE.md / SKILLS.md / Harness / README v6.8~v6.9 반영, Dev_Enhancement 별도 산출 |
+| 하위 문서 정합화 | 진행 중 — CLAUDE.md v6.10 완료. SKILLS/Harness/README v6.11 정합 필요 |
 | A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
 | Athena Windows 이전 | 위치 무관(pull)이라 제약 완화. 단 실연동 검증 필요 |
 | Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
 | 등록 토큰 발급/배포 절차 | 미정 — env 키 네이밍·로테이션 정책 필요 |
 | Raw SQLite 외부 의존 결정 | 미정 — node:sqlite(내장) vs better-sqlite3(외부). 내장 우선, 외부는 승인 필요 |
 | 멀티테넌시 본격 설계 | 보류 — v6.10은 키 확장 자리만. 테넌트별 격리·과금·권한은 별도 결정 |
+| Google A2A 표준 호환 레이어 | 미결 — 외부 에이전트 연동 필요 시 검토. 현재 Olympus A2A는 독자 규격. Agent Card 노출 + Task 수신 레이어 도입 여부는 보류 |
 
 ---
 
@@ -666,15 +675,16 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 3. **Phase 9** — user_id 어댑터 추출 + Admin API
 4. **Raw 백엔드** — SqliteSink 구현 (T7.5/T7.6), node:sqlite 가용성 확인
 5. **VPS Docker 이전** — Dockerfile + docker-compose (라우터+어댑터)
-6. **보안 [구현필요]** — 토큰↔agent_id 바인딩, job_id 대조, DoS 상한, Admin 인증 (Dev_Enhancement 보안 섹션)
+6. **보안 [구현필요]** — 토큰↔agent_id 바인딩, job_id 대조, DoS 상한, Admin 인증
 7. **Phase 11** — 에이전트 SDK + 온보딩 (실구현·보안 이후)
 8. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
+9. **Google A2A 호환 레이어** — 외부 에이전트 연동 필요 시 재검토 (보류)
 
 ---
 
 ## 16. v6.8 확정 결정 번복 기록 (Decision Reversal Log)
 
-이전까지 "확정/재논의 금지/핵심 제약"으로 잠겨 있던 결정 5건을 본 버전에서 의도적으로 번복한다. 사유: 라우터·어댑터를 외부 접속 가능한 VPS로 이전하고, 에이전트가 어디 있든 추가 설정 없이 합류할 수 있게 하기 위함.
+이전까지 "확정/재논의 금지/핵심 제약"으로 잠겨 있던 결정 5건을 본 버전에서 의도적으로 번복한다.
 
 | # | 기존 확정 결정 | v6.8 번복 후 | 사유 |
 |---|------|------|------|
