@@ -2,7 +2,7 @@
 
 > 구현 전 반드시 참조. 이 프로젝트에서 허용되는 코드 패턴과 금지되는 안티패턴을 정의한다.
 > 자기완결형 — 예시 코드를 그대로 따라 작성하면 설계 원칙을 자동으로 지키게 된다.
-> **정합 기준: Olympus_PRD_Plan.md v6.8** (pull 통신모델 / Job Queue / 등록토큰)
+> **정합 기준: Olympus_PRD_Plan.md v6.9** (pull 통신모델 / Job Queue / 등록토큰 / Raw 백엔드 추상화)
 
 ---
 
@@ -316,25 +316,68 @@ function resolveTargets(callerId, requested) {
 
 ---
 
-## 12. Raw 드롭 패턴 (옵션)
+## 12. Raw 저장 패턴 (옵션) — 백엔드 추상화 (v6.9)
+
+Raw 저장은 `raw-sink` 인터페이스 뒤에서 백엔드를 교체한다. 기본 `file`(JSONL), 옵션 `sqlite`.
+어느 백엔드든 **fire-and-forget·코어 블로킹 금지**를 지킨다.
 
 ```javascript
-// router-core/raw-logger.js
-async function dropToRaw(envelope) {
-  if (!registry.system.wiki?.raw_logging_enabled) return;  // 옵션 OFF면 skip
+// router-core/raw-logger.js — 백엔드 선택 + 공통 진입점
+function makeSink(system) {
+  if (!system.wiki?.raw_logging_enabled) return null;     // 옵션 OFF
+  return system.wiki.raw_backend === "sqlite"
+    ? new SqliteSink(system.wiki.sqlite_path)
+    : new FileSink(system.wiki.raw_path);                 // 기본 file
+}
+
+function dropToRaw(sink, envelope) {
+  if (!sink) return;                                       // OFF면 skip
   const record = {
     timestamp: new Date().toISOString(),
     targets: envelope.routing.to,
     meta: { platform: envelope.payload.origin_platform, space_key: envelope.context_key },
     text: envelope.payload.text
   };
-  // 플랫폼 무관 단일 폴더. 비동기, 코어 블로킹 금지
-  fs.promises.appendFile(
-    `${registry.system.wiki.raw_path}${Date.now()}_${envelope.idempotency_key}.jsonl`,
-    JSON.stringify(record) + '\n'
-  ).catch(() => {});   // 실패해도 코어 영향 0
+  sink.write(record).catch(() => {});                      // 비동기, 실패해도 코어 영향 0
 }
 ```
+
+```javascript
+// FileSink — 현행 동작 (JSONL append)
+class FileSink {
+  constructor(dir) { this.dir = dir; }
+  write(record) {
+    return fs.promises.appendFile(
+      `${this.dir}${Date.now()}_${record.meta.space_key}.jsonl`,
+      JSON.stringify(record) + '\n'
+    );
+  }
+}
+
+// SqliteSink — 옵션 (node:sqlite 우선, 외부의존 better-sqlite3는 별도 승인)
+// SQLite는 동시 쓰기 락이 있으므로 단일 직렬 큐로 write를 직렬화한다.
+class SqliteSink {
+  constructor(path) {
+    // const { DatabaseSync } = require('node:sqlite');  // Node 22+
+    // this.db = new DatabaseSync(path);
+    // this.db.exec('CREATE TABLE IF NOT EXISTS raw (ts TEXT, platform TEXT, space_key TEXT, payload TEXT)');
+    this._chain = Promise.resolve();   // 직렬화 체인
+  }
+  write(record) {
+    // 비정형 text는 payload(JSON 문자열) 컬럼에 통째로. 정형 키는 별도 컬럼.
+    this._chain = this._chain.then(() => this._insert(record)).catch(() => {});
+    return this._chain;
+  }
+  _insert(record) {
+    // this.db.prepare('INSERT INTO raw VALUES (?,?,?,?)')
+    //   .run(record.timestamp, record.meta.platform, record.meta.space_key, JSON.stringify(record));
+    return Promise.resolve();
+  }
+}
+```
+
+> 두 백엔드 모두 동일한 `write(record)` 계약을 따른다. 라우터 코어는 어느 백엔드인지 몰라야 한다(추상화 유지).
+> ❌ `await sink.write(...)`로 코어를 멈추면 안 된다. fire-and-forget.
 
 ---
 
