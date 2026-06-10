@@ -2,7 +2,7 @@
 
 > 코딩 에이전트가 **스스로 구현을 검증**하기 위한 테스트 골격. PRD의 Exit Criteria를 node:test로 실행 가능한 형태로 매핑한다.
 > 에이전트는 각 Phase 구현 후 해당 테스트를 직접 실행하고 통과율을 보고해야 한다.
-> **정합 기준: Olympus_PRD_Plan.md v6.9** (Phase 8~10 + Raw 백엔드 추상화 T7.5/T7.6)
+> **정합 기준: Olympus_PRD_Plan.md v6.11** (Phase 8~10 + Raw 백엔드 추상화 T7.5/T7.6 + Phase 11 SDK·온보딩·tenant 키확장 T11.1~7 + Google A2A 관계 명시)
 
 ---
 
@@ -39,6 +39,7 @@ harness/
 │   ├── phase8.test.js   # T5.17~T5.22 (Agora 동기화)   [v6.8 미구현]
 │   ├── phase9.test.js   # T9.x (다중 사용자·Admin)       [v6.8 미구현]
 │   ├── phase10.test.js  # T10.x (Pull 통신·보안)         [v6.8 미구현]
+│   ├── phase11.test.js  # T11.x (SDK·온보딩·tenant 키)   [v6.10 미구현]
 │   └── e2e.test.js      # E1~E8
 ├── mocks/
 │   ├── mock-agent.js    # 설정 가능한 가짜 에이전트
@@ -262,6 +263,19 @@ agents:
 | T10.S4 | 보안: 큐 크기 상한 초과 적재 → 거부 |
 | T10.S5 | 보안: 평문 HTTP 폴링 거부 (HTTPS 강제 환경) |
 
+### Phase 11 (phase11.test.js) — 상용화 골격 [v6.10 미구현]
+| 테스트 | 검증 |
+|--------|------|
+| T11.1 | 에이전트 SDK(Node) — `connect/onJob/start`로 폴링·토큰·result 자동 처리 |
+| T11.2 | SDK 핸들러 예외 → error result로 변환·제출 (라우터가 어댑터로 실패 전달) |
+| T11.3 | SDK가 A2A 재진입 시 `payload._source_url` 자동 첨부 |
+| T11.4 | SDK 없이 직접 HTTP(`poll`/`result` + Bearer 토큰 + `_source_url`)로도 동일 계약 동작 (호환성) |
+| T11.5 | 키 생성 함수가 `tenant_id` prefix 주입 가능한 구조 — 단일 테넌트는 prefix 없이 동작, 코드에 tenant_id 삽입 없음 |
+| T11.6 | 온보딩 — `POST /admin/agents` 시 토큰 발급(1회 노출), `/admin/agents/:id/test`로 폴링 수신 확인 |
+| T11.7 | 토큰 재발급 — 분실 시 기존 무효화 + 신규 발급 1회 노출 |
+
+> (v6.11) Phase 11 SDK는 향후 Google A2A Agent Card(`/.well-known/agent.json`) 노출 인터페이스를 선택적으로 추가할 수 있는 구조로 설계한다. 단 현재 테스트 대상 아님(PRD 14절 미결).
+
 ---
 
 ## 5. A2A 핵심 테스트 상세 예시 (T5.3 — 3기 발화자 한도)
@@ -330,3 +344,4 @@ PRD 반영: 불필요 (구현 누락이었음)
 | v1.0 | PRD v6.3 기준 Phase 1~7 + E2E 테스트 매핑 초안 |
 | v1.1 | PRD v6.8 정합 — Phase 8(Agora) / Phase 9(다중사용자·Admin) / Phase 10(Pull 통신·보안 T10.S1~S5) 매핑 추가. mock≠완료 명시, user_id·poll 설정 fixture 반영 |
 | v1.2 | PRD v6.9 정합 — Phase 7에 Raw 백엔드 추상화 T7.5(SqliteSink)/T7.6(백엔드 토글 무수정) 추가, fixture에 raw_backend/sqlite_path 반영 |
+| v1.3 | PRD v6.11 정합 — Phase 11(T11.1~7 SDK·온보딩·tenant 키확장) 매핑 추가. 디렉터리에 phase11.test.js 추가. 정합기준 v6.11 갱신. Google A2A 관계 주석(Phase 11 안내) |
