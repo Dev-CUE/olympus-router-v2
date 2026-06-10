@@ -2,7 +2,7 @@
 
 > 코딩 에이전트가 **스스로 구현을 검증**하기 위한 테스트 골격. PRD의 Exit Criteria를 node:test로 실행 가능한 형태로 매핑한다.
 > 에이전트는 각 Phase 구현 후 해당 테스트를 직접 실행하고 통과율을 보고해야 한다.
-> **정합 기준: Olympus_PRD_Plan.md v6.11** (Phase 8~10 + Raw 백엔드 추상화 T7.5/T7.6 + Phase 11 SDK·온보딩·tenant 키확장 T11.1~7 + Google A2A 관계 명시)
+> **정합 기준: Olympus_PRD_Plan.md v6.12** (Phase 8~11 + Raw 백엔드 추상화 T7.5/T7.6 + **메모리 라이프사이클(T5.14 공간별 기록 분기 / T7.7 Raw 드롭 DM 스킵) + Phase 12 보안감사 T12.1~8**)
 
 ---
 
@@ -40,6 +40,7 @@ harness/
 │   ├── phase9.test.js   # T9.x (다중 사용자·Admin)       [v6.8 미구현]
 │   ├── phase10.test.js  # T10.x (Pull 통신·보안)         [v6.8 미구현]
 │   ├── phase11.test.js  # T11.x (SDK·온보딩·tenant 키)   [v6.10 미구현]
+│   ├── phase12.test.js  # T12.x (보안감사 모듈)           [v6.12 미구현]
 │   └── e2e.test.js      # E1~E8
 ├── mocks/
 │   ├── mock-agent.js    # 설정 가능한 가짜 에이전트
@@ -201,10 +202,12 @@ agents:
 | T5.10 | telegram→slack → CROSS_PLATFORM_DENIED |
 | T5.11 | cc A2A 개시 → 차단 |
 | T5.12 | 위조 caller → 스푸핑 실패 |
-| T5.13 | 중간 라운드 → SPACE만, Mem0 미기록 |
-| T5.14 | resolved → 최종만 Mem0 기록 |
+| T5.13 | 중간 라운드 → SPACE만, Mem0/Obsidian 미기록 |
+| T5.14 | resolved → 최종만 기록. **(v6.12) 공간별 분기**: DM이면 Mem0 / 그룹·A2A면 Obsidian(Raw 경로) |
 | T5.15 | cc 매 라운드 청취, 게시·기록 없음 |
 | T5.16 | 모드 미지정 → single 기본값 |
+
+> **(v6.12 T5.14 변경 — before/after)**: 기존 `T5.14: resolved → 최종만 Mem0 기록`(공간 무관) → 변경 `T5.14: DM이면 Mem0 / 그룹·A2A면 Obsidian(Raw→Gemini 경로)`. PRD 6.4 v6.12 공간별 기록 분기에 따른 정당한 수정(테스트 무결성 규칙). 검증: DM context_key의 A2A 결론 → Mem0 기록 / 그룹 context_key의 A2A 결론 → Raw 드롭(Obsidian 경로) 확인, Mem0 미기록.
 
 ### Phase 6 (phase6.test.js)
 | 테스트 | 검증 |
@@ -222,6 +225,7 @@ agents:
 | T7.4 | (mock) Gemini 분류 → Obsidian 병합 호출 |
 | T7.5 | (v6.9) `raw_backend:"sqlite"` → SqliteSink로 Raw 기록 (file과 동일 계약) |
 | T7.6 | (v6.9) 백엔드 토글(file↔sqlite) 전환 시 라우터 코드 무수정 + 코어 지연 0 |
+| T7.7 | (v6.12) Raw 드롭 시 `space_type==dm`이면 스킵 — DM은 조직 지식 파이프라인 제외 (그룹/포럼은 드롭) |
 
 ### Phase 8 (phase8.test.js) — Agora 동기화 [v6.8 미구현]
 | 테스트 | 검증 |
@@ -275,6 +279,21 @@ agents:
 | T11.7 | 토큰 재발급 — 분실 시 기존 무효화 + 신규 발급 1회 노출 |
 
 > (v6.11) Phase 11 SDK는 향후 Google A2A Agent Card(`/.well-known/agent.json`) 노출 인터페이스를 선택적으로 추가할 수 있는 구조로 설계한다. 단 현재 테스트 대상 아님(PRD 14절 미결).
+
+### Phase 12 (phase12.test.js) — 보안감사 모듈 [v6.12 미구현, 옵션 B2B]
+| 테스트 | 검증 |
+|--------|------|
+| T12.1 | `audit.enabled:false` → audit-sink 비가동 (없는 것과 동일) |
+| T12.2 | audit-sink는 동기 쓰기·무손실 — 쓰기 실패 시 throw(무시 안 함). Raw Sink(fire-and-forget)와 구현 분리 |
+| T12.3 | `audit.org.default:true` → DM 외 전수 감사, `exclusions`에 든 space_id만 면제 (default-on opt-out) |
+| T12.4 | `audit.dm` 토글로 DM 감사 on/off (기본 off) |
+| T12.5 | 감사 정책 변경은 `/admin/*` 전용 — 비관리자(피감사자) 접근 거부 |
+| T12.6 | 감사 정책 변경 이력이 audit-sink에 기록 (메타 감사) |
+| T12.7 | 감사 정책 런타임 재로드 (재시작 없이 반영) |
+| T12.8 | 배치 감사 워커 → 감사 보고서 생성 (라우터 코어 비차단) |
+
+> **상태↔UI 매핑**: `1=감사대상=체크(기본)` / `0=면제=체크해제`. "블랙리스트" 아님 — default-on opt-out.
+> **권한 분리(T12.5)**: 피감사자가 자기 감사를 끌 수 있으면 감사 무의미(separation of duties). 정책은 관리자 전용.
 
 ---
 
@@ -345,3 +364,4 @@ PRD 반영: 불필요 (구현 누락이었음)
 | v1.1 | PRD v6.8 정합 — Phase 8(Agora) / Phase 9(다중사용자·Admin) / Phase 10(Pull 통신·보안 T10.S1~S5) 매핑 추가. mock≠완료 명시, user_id·poll 설정 fixture 반영 |
 | v1.2 | PRD v6.9 정합 — Phase 7에 Raw 백엔드 추상화 T7.5(SqliteSink)/T7.6(백엔드 토글 무수정) 추가, fixture에 raw_backend/sqlite_path 반영 |
 | v1.3 | PRD v6.11 정합 — Phase 11(T11.1~7 SDK·온보딩·tenant 키확장) 매핑 추가. 디렉터리에 phase11.test.js 추가. 정합기준 v6.11 갱신. Google A2A 관계 주석(Phase 11 안내) |
+| v1.4 | PRD v6.12 정합 — **T5.14 공간별 기록 분기로 갱신**(DM→Mem0 / 그룹·A2A→Obsidian, before/after 명시) / T5.13 표현 명확화 / **T7.7 Raw 드롭 DM 스킵** 추가 / **Phase 12(T12.1~8 보안감사) 매핑** 추가 / 디렉터리에 phase12.test.js 추가. 정합기준 v6.12 |
