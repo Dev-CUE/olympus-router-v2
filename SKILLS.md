@@ -2,7 +2,7 @@
 
 > 구현 전 반드시 참조. 이 프로젝트에서 허용되는 코드 패턴과 금지되는 안티패턴을 정의한다.
 > 자기완결형 — 예시 코드를 그대로 따라 작성하면 설계 원칙을 자동으로 지키게 된다.
-> **정합 기준: Olympus_PRD_Plan.md v6.9** (pull 통신모델 / Job Queue / 등록토큰 / Raw 백엔드 추상화)
+> **정합 기준: Olympus_PRD_Plan.md v6.11** (pull 통신모델 / Job Queue / 등록토큰 / Raw 백엔드 추상화 / 에이전트 SDK 계약(9-A) / tenant_id 키 확장 여지(9-B) / Google A2A 관계 명시)
 
 ---
 
@@ -165,6 +165,7 @@ function discordContextKey(msg) {
 
 > 규격: `{platform}:{space_type}:{space_id}:{topic_or_thread_id}`
 > (v6.8) 어댑터는 `payload.user_id`(플랫폼 사용자 ID)를 항상 포함한다. DM은 `chat_id === user_id`.
+> (v6.10 tenant 확장 여지) 키 조립은 향후 `tenant_id` prefix 주입이 가능한 형태로 유지한다. 단일 테넌트는 `tenant_id` 없이 동작하며 **지금 코드에 tenant_id를 넣지 않는다.** 하드코딩된 키 조립(문자열 직접 연결 고정) 금지 — 확장 시 키 생성 지점 1곳만 바꿔 `{tenant_id}:{platform}:...`가 되도록 한다.
 
 ---
 
@@ -186,6 +187,7 @@ const ccScope = {
 
 > ❌ `persona_key: \`${platform}:${id}\`` — 절대 금지 (플랫폼 격리 아님)
 > ✅ `persona_key: id` — 플랫폼 초월 공유
+> (v6.10 tenant 확장 여지) 향후 테넌트 도입 시 `persona_key`는 `{tenant_id}:{agent_id}`로만 확장한다. **플랫폼 prefix 금지 원칙은 불변** — tenant prefix는 허용되나 platform prefix는 어떤 경우에도 붙이지 않는다.
 
 ---
 
@@ -225,6 +227,8 @@ a2a: {
 ---
 
 ## 9. A2A 가드 패턴 (정답 코드)
+
+> (v6.11) 본 A2A 가드는 **Olympus 독자 규격**(SINGLE/DIALOGUE, 발화자 한도, resolved/out 신호)이다. Google이 발표하고 Linux Foundation에 이관한 **Google A2A 표준**(`a2a-protocol.org`)과는 별개다. Olympus 내부 에이전트 간 통신에는 Google A2A를 적용하지 않는다. 외부 에이전트(타 벤더·프레임워크) 연동이 필요해질 경우의 호환 레이어(Agent Card 노출 등)는 **미결·보류**(PRD 14절). 혼용 금지.
 
 검증 순서를 반드시 지킨다. (v6.8 순서: 자기호출 → 권한 → 교차플랫폼 → 스푸핑 → resolved/out → 라운드 → 발화자)
 
@@ -432,3 +436,103 @@ test('T1.3 — 미존재 에이전트 거부', async () => {
 
 실행: `node --test harness/tests/`
 > Windows + Node v24에서 디렉터리 인자는 MODULE_NOT_FOUND로 실패하므로 glob 사용: `node --test harness/tests/*.test.js`
+
+---
+
+## 15. 에이전트 SDK 클라이언트 패턴 (v6.10 — 9-A 계약)
+
+에이전트 개발자가 폴링 루프·토큰 헤더·`/result` 제출·재폴링을 직접 구현하지 않도록, SDK가 라우터 통신 프로토콜을 감춘다. **SDK는 편의 레이어일 뿐 필수가 아니다 — 직접 HTTP로도 동일 계약이 동작해야 한다(PRD T11.4).** 참조 구현 언어는 Node.js(라우터와 동일 스택).
+
+### 15.1 SDK가 감추는 것 (에이전트가 몰라도 되는 것)
+- 롱폴링 루프 (`GET /agents/:id/poll`, `204`면 즉시 재폴링)
+- `Authorization: Bearer <등록 토큰>` 헤더 부착
+- 결과 제출 (`POST /agents/:id/result`, `{ job_id, result }`)
+- A2A 재진입 시 `payload._source_url` 자동 첨부
+- 네트워크 단절 시 백오프 재접속
+
+### 15.2 SDK 노출 인터페이스 (정답 코드)
+
+```javascript
+// sdk/olympus-agent.js — 에이전트가 import해서 쓰는 클라이언트
+import { setTimeout as sleep } from 'node:timers/promises';
+
+export class OlympusAgent {
+  constructor({ router_url, agent_id, token, source_url }) {
+    // 설정값 4개가 전부. 에이전트는 통신을 몰라도 된다.
+    this.router_url = router_url;     // 예: https://router.frameq.io
+    this.agent_id = agent_id;         // registry 등록 id와 일치
+    this.token = token;               // env에서 주입 (SDK가 헤더 처리)
+    this.source_url = source_url;     // 자기 URL (A2A _source_url 자동 첨부용)
+    this._running = false;
+  }
+
+  onJob(handler) { this._handler = handler; return this; }
+
+  async start() {
+    this._running = true;
+    let backoff = 500;
+    while (this._running) {
+      try {
+        const res = await fetch(`${this.router_url}/agents/${this.agent_id}/poll`, {
+          headers: { authorization: `Bearer ${this.token}` }
+        });
+        if (res.status === 204) { backoff = 500; continue; }   // 큐 비면 즉시 재폴링
+        if (res.status === 401) throw new Error('UNAUTHORIZED_POLL — 토큰 확인');
+        if (!res.ok) { await sleep(backoff); backoff = Math.min(backoff * 2, 15000); continue; }
+
+        const { job_id, envelope } = await res.json();
+        backoff = 500;
+        let result;
+        try {
+          result = await this._handler(envelope);   // 에이전트는 이 핸들러만 구현
+        } catch (err) {
+          // 핸들러 예외 → error result로 변환·제출 (T11.2). 라우터가 어댑터로 실패 전달.
+          result = { status: 'error', response_text: String(err?.message ?? err) };
+        }
+        // A2A 재진입 시 _source_url 자동 첨부 (T11.3) — 에이전트가 신경 쓸 필요 없음
+        await this._submit(job_id, result);
+      } catch (err) {
+        await sleep(backoff);
+        backoff = Math.min(backoff * 2, 15000);     // 네트워크 단절 시 백오프
+      }
+    }
+  }
+
+  async _submit(job_id, result) {
+    await fetch(`${this.router_url}/agents/${this.agent_id}/result`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ job_id, result })
+    });
+  }
+
+  stop() { this._running = false; }
+}
+```
+
+### 15.3 에이전트 사용 예 (핸들러만 구현)
+
+```javascript
+// 에이전트 개발자가 작성하는 전부 — 통신 코드 0줄
+const client = new OlympusAgent({
+  router_url: process.env.OLYMPUS_ROUTER_URL,
+  agent_id: 'zeus',
+  token: process.env.OLYMPUS_AGENT_TOKEN_ZEUS,   // 토큰은 env로만 (코드·yaml 금지)
+  source_url: process.env.ZEUS_SOURCE_URL
+});
+
+client.onJob(async (envelope) => {
+  // 일감 처리에만 집중. envelope.payload.text 등 사용.
+  return {
+    status: 'success',
+    response_text: '검토 완료...',
+    a2a_status: 'resolved',          // 또는 'out' | 'continue'
+    activities: [{ tool: 'terminal', detail: 'kubectl get pods' }]
+  };
+});
+
+client.start();
+```
+
+> **직접 HTTP 동등성(T11.4)**: SDK가 하는 일은 위 두 fetch + 폴링 루프뿐이다. 타 언어(Python 등)나 SDK 미사용 에이전트도 `poll`/`result` 두 엔드포인트 + Bearer 토큰 + `_source_url` 규약만 지키면 동일하게 동작한다.
+> **(v6.11 확장 여지)** SDK는 향후 Google A2A `Agent Card`(`/.well-known/agent.json`) 노출 인터페이스를 **선택적으로** 추가할 수 있는 구조로 둔다. 단 현재 구현 대상 아님(PRD 14절 미결).
