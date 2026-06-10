@@ -2,7 +2,7 @@
 
 > 코딩 에이전트가 **스스로 구현을 검증**하기 위한 테스트 골격. PRD의 Exit Criteria를 node:test로 실행 가능한 형태로 매핑한다.
 > 에이전트는 각 Phase 구현 후 해당 테스트를 직접 실행하고 통과율을 보고해야 한다.
-> **정합 기준: Olympus_PRD_Plan.md v6.8** (Phase 8~10 매핑 추가)
+> **정합 기준: Olympus_PRD_Plan.md v6.9** (Phase 8~10 + Raw 백엔드 추상화 T7.5/T7.6)
 
 ---
 
@@ -120,7 +120,9 @@ system:
     job_queue_ttl_ms: 5000
   wiki:
     raw_logging_enabled: true
+    raw_backend: "file"            # T7.5는 "sqlite"로 토글하여 검증
     raw_path: "harness/tmp/raw/"
+    sqlite_path: "harness/tmp/raw.db"
 
 agents:
   - id: "agentA"
@@ -217,6 +219,8 @@ agents:
 | T7.2 | =false → 파일 미생성 |
 | T7.3 | Raw 드롭 코어 지연 0 |
 | T7.4 | (mock) Gemini 분류 → Obsidian 병합 호출 |
+| T7.5 | (v6.9) `raw_backend:"sqlite"` → SqliteSink로 Raw 기록 (file과 동일 계약) |
+| T7.6 | (v6.9) 백엔드 토글(file↔sqlite) 전환 시 라우터 코드 무수정 + 코어 지연 0 |
 
 ### Phase 8 (phase8.test.js) — Agora 동기화 [v6.8 미구현]
 | 테스트 | 검증 |
@@ -325,3 +329,4 @@ PRD 반영: 불필요 (구현 누락이었음)
 |------|------|
 | v1.0 | PRD v6.3 기준 Phase 1~7 + E2E 테스트 매핑 초안 |
 | v1.1 | PRD v6.8 정합 — Phase 8(Agora) / Phase 9(다중사용자·Admin) / Phase 10(Pull 통신·보안 T10.S1~S5) 매핑 추가. mock≠완료 명시, user_id·poll 설정 fixture 반영 |
+| v1.2 | PRD v6.9 정합 — Phase 7에 Raw 백엔드 추상화 T7.5(SqliteSink)/T7.6(백엔드 토글 무수정) 추가, fixture에 raw_backend/sqlite_path 반영 |
