@@ -2,7 +2,7 @@
 
 > **새 세션은 무조건 이 파일을 먼저 읽는다.** 이 파일은 버전에 묶이지 않는 고정 진입점이며,
 > 작업이 진행될 때마다 최신 상태로 덮어쓴다(영속 SSOT 보조 문서).
-> 최종 갱신: 2026-06-10 | **현재 단계: PRD v6.12 확정 → 하위 문서 v6.12 재정합 필요 (메모리 라이프사이클 + 보안감사)**
+> 최종 갱신: 2026-06-10 | **현재 단계: 하위 문서 v6.12 정합 전체 완료 ✅ → 다음은 Phase 8~10 구현(또는 신규 설계)**
 
 ---
 
@@ -82,26 +82,26 @@
 
 ## 5. 하위 문서 정합화 현황
 
-**v6.11 정합은 완료됐으나, PRD가 v6.12로 올라가며 하위 문서가 다시 뒤처짐. v6.12 재정합 필요.**
+**PRD v6.12 기준 전 하위 문서 정합 완료 ✅. 더 작업할 정합 없음.**
 
-| 문서 | 정합 | 할 일 (v6.12) |
-|------|------|--------------|
-| Olympus_PRD_Plan.md | **v6.12 ✅** | 없음 (SSOT, commit cf4293e) |
-| CLAUDE.md | v6.10 | 메모리 라이프사이클 원칙(4-A) + 보안감사 원칙 반영 검토 |
-| SKILLS.md | v6.11 | **DM 스킵 패턴 / audit-sink 패턴 / 회의→Obsidian 트리거** 추가 |
-| Olympus_Harness.md | v6.11 | **T5.14 갱신(DM→Mem0/그룹→Obsidian) + Phase 12(T12.1~8) 매핑** |
-| Dev_Enhancement_Olympus.md | v6.11 | **메모리 라이프사이클 + 보안감사 운영 시나리오** 반영 |
-| README.md | v6.11 | 메모리 모델·감사 옵션 한 줄 |
+| 문서 | 정합 | commit |
+|------|------|--------|
+| Olympus_PRD_Plan.md | **v6.12 ✅** | cf4293e (SSOT) |
+| SKILLS.md | **v6.12 ✅** | bcd28ad9 |
+| Olympus_Harness.md | **v1.4 / v6.12 ✅** | acaea5a9 |
+| Dev_Enhancement_Olympus.md | **v6.12 ✅** | 1cad0f29 |
+| CLAUDE.md | **v6.12 ✅** | b812685b |
+| README.md | **v6.12 ✅** | b812685b |
 
-우선순위: SKILLS → Harness → Dev_Enhancement → CLAUDE → README
+**모든 문서 v6.12 정합 완료.**
 
-### v6.12 정합 시 핵심 (실수 방지)
+### v6.12 핵심 (재확인용 — 구현/후속 설계 시 실수 방지)
 - **DM=Mem0(사적) / DM외=Obsidian(조직)**. 인격은 공간 무관 Mem0.
-- **회의→Obsidian는 eventual** (폴링+resolved/out 마커). 즉시 아님.
-- **Raw 드롭은 DM 스킵** (`space_type==dm`).
-- **audit-sink는 Raw Sink와 구현 분리** (불변·무손실 vs fire-and-forget·휘발).
-- **감사 정책 = 관리자 전용**. 피감사자 접근 불가. 1=감사·0=면제. "블랙리스트" 용어 금지 → "default-on opt-out".
-- **T5.14 충돌**: 기존 "resolved→Mem0"를 공간별 분기로 갱신 (before/after 보고).
+- **회의→Obsidian는 eventual** (Gemini 워커 폴링 + resolved/out 마커). 즉시 아님.
+- **Raw 드롭은 DM 스킵** (`space_type==dm`) — SKILLS 12·16절, Harness T7.7.
+- **audit-sink는 Raw Sink와 구현 분리** (불변·무손실 vs fire-and-forget·휘발) — SKILLS 17절, Harness Phase 12.
+- **감사 정책 = 관리자 전용**(피감사자 접근 불가). 1=감사·0=면제. "default-on opt-out"(블랙리스트 아님).
+- **T5.14 갱신됨**: resolved 기록 = DM이면 Mem0 / 그룹·A2A면 Obsidian (Harness v1.4, before/after 명시).
 
 ---
 
@@ -124,11 +124,14 @@
 
 ## 7. 다음 단계
 
-1. **하위 문서 v6.12 재정합** (현재 단계 — B 역할)
-2. **Phase 8~10 구현** (AGENT.md 작성 → CLI) — Pull 통신 코드 전환(v7.0 트리거)
-3. **T10.10 실연동** — 실제 에이전트 1기 DM/그룹 실메시지 왕복 (mock 통과 불인정)
-4. **Phase 11** — SDK(Node), 온보딩, tenant 키 구조
-5. **Phase 12** — 보안감사 모듈 (audit-sink + 배치 감사 + 보고서, B2B 옵션)
+> 문서 정합은 끝났다. 다음은 구현(C 역할, CLI) 또는 신규 설계(A 역할).
+
+1. **Phase 8~10 구현** (AGENT.md 작성 → CLI) — Pull 통신 코드 전환(착수 시 v7.0 트리거)
+2. **T10.10 실연동** — 실제 에이전트 1기 DM/그룹 실메시지 왕복 (mock 통과 불인정)
+3. **Phase 11** — SDK(Node), 온보딩, tenant 키 구조
+4. **Phase 12** — 보안감사 모듈 (audit-sink + 배치 감사 + 보고서, B2B 옵션)
+
+> 코드 우선순위: Phase 8~10(실구현·보안) 먼저, Phase 11·12는 그 이후.
 
 ---
 
@@ -146,7 +149,11 @@
 | 2dde8cc | Dev_Enhancement_Olympus.md 신규 — v6.11 |
 | 9cd4327 | README v6.11 + agents.example.yaml 신규 |
 | cf4293e | **PRD v6.12** — 메모리 라이프사이클 + 보안감사 모듈(9-D) + Phase 12 |
-| (이 커밋) | HANDOFF 갱신 — v6.12 반영, 하위 문서 재정합 필요 명시 |
+| bcd28ad9 | SKILLS v6.12 — 12절 DM 스킵 / 16절 메모리 라이프사이클 / 17절 audit-sink |
+| acaea5a9 | Harness v1.4 — T5.14 공간별 분기 / T7.7 DM 스킵 / Phase 12 매핑 |
+| 1cad0f29 | Dev_Enhancement v6.12 — 메모리·보안감사 운영 시나리오 |
+| b812685b | CLAUDE v6.12(원칙 8) + README v6.12 |
+| (이 커밋) | HANDOFF 최종 — 하위 문서 v6.12 정합 전체 완료 |
 
 > `Olympus_Handoff_v610.md`는 구 핸드오프. **본 HANDOFF.md가 최신·정본**.
 
