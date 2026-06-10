@@ -2,7 +2,7 @@
 
 > 구현 전 반드시 참조. 이 프로젝트에서 허용되는 코드 패턴과 금지되는 안티패턴을 정의한다.
 > 자기완결형 — 예시 코드를 그대로 따라 작성하면 설계 원칙을 자동으로 지키게 된다.
-> **정합 기준: Olympus_PRD_Plan.md v6.11** (pull 통신모델 / Job Queue / 등록토큰 / Raw 백엔드 추상화 / 에이전트 SDK 계약(9-A) / tenant_id 키 확장 여지(9-B) / Google A2A 관계 명시)
+> **정합 기준: Olympus_PRD_Plan.md v6.12** (pull 통신모델 / Job Queue / 등록토큰 / Raw 백엔드 추상화 / 에이전트 SDK 계약(9-A) / tenant_id 키 확장 여지(9-B) / Google A2A 관계 / **메모리 라이프사이클(DM=Mem0·DM외=Obsidian, 4-A) / 보안감사 audit-sink(9-D)**)
 
 ---
 
@@ -166,6 +166,7 @@ function discordContextKey(msg) {
 > 규격: `{platform}:{space_type}:{space_id}:{topic_or_thread_id}`
 > (v6.8) 어댑터는 `payload.user_id`(플랫폼 사용자 ID)를 항상 포함한다. DM은 `chat_id === user_id`.
 > (v6.10 tenant 확장 여지) 키 조립은 향후 `tenant_id` prefix 주입이 가능한 형태로 유지한다. 단일 테넌트는 `tenant_id` 없이 동작하며 **지금 코드에 tenant_id를 넣지 않는다.** 하드코딩된 키 조립(문자열 직접 연결 고정) 금지 — 확장 시 키 생성 지점 1곳만 바꿔 `{tenant_id}:{platform}:...`가 되도록 한다.
+> **(v6.12) `space_type==dm` 여부가 공통 분기 기준**: 메모리 라이프사이클(DM→Mem0 / DM외→Obsidian, 16절), Raw 드롭 DM 스킵(12절), 보안감사 대상 판정(17절)이 모두 이 값으로 갈린다. 어댑터가 정확히 생성해야 한다.
 
 ---
 
@@ -336,6 +337,8 @@ function makeSink(system) {
 
 function dropToRaw(sink, envelope) {
   if (!sink) return;                                       // OFF면 skip
+  // (v6.12) DM은 사적 — 조직 지식 파이프라인 스킵. context_key의 space_type으로 판별.
+  if (isDM(envelope.context_key)) return;                  // DM 드롭 안 함 (16절)
   const record = {
     timestamp: new Date().toISOString(),
     targets: envelope.routing.to,
@@ -410,6 +413,9 @@ const ZEUS_TOKEN = "abc123";              // env 전용
 
 // ❌ Raw 드롭이 코어 블로킹
 await fs.appendFile(...);  // await로 코어 멈추면 안 됨
+
+// ❌ (v6.12) audit-sink에 fire-and-forget 적용 (감사 무손실 위반)
+auditSink.write(...).catch(() => {});     // 감사 기록은 실패를 삼키면 안 됨 (17절)
 ```
 
 ---
@@ -536,3 +542,90 @@ client.start();
 
 > **직접 HTTP 동등성(T11.4)**: SDK가 하는 일은 위 두 fetch + 폴링 루프뿐이다. 타 언어(Python 등)나 SDK 미사용 에이전트도 `poll`/`result` 두 엔드포인트 + Bearer 토큰 + `_source_url` 규약만 지키면 동일하게 동작한다.
 > **(v6.11 확장 여지)** SDK는 향후 Google A2A `Agent Card`(`/.well-known/agent.json`) 노출 인터페이스를 **선택적으로** 추가할 수 있는 구조로 둔다. 단 현재 구현 대상 아님(PRD 14절 미결).
+
+---
+
+## 16. 메모리 라이프사이클 패턴 (v6.12 — PRD 4-A 정합)
+
+**규칙**: DM = Mem0(사적 보좌) / DM 외(그룹·포럼·A2A) = Obsidian(조직 지식). 인격 자체는 공간 무관 항상 Mem0. 분기 기준은 `context_key`의 `space_type`.
+
+### 16.1 DM 판별 (공통 헬퍼 — 정답 코드)
+
+```javascript
+// context_key = {platform}:{space_type}:{space_id}:{topic_id}
+// space_type 위치만 보면 된다. 텍스트 파싱 아님(Dumb Pipe 유지).
+function isDM(contextKey) {
+  return contextKey.split(':')[1] === 'dm';
+}
+```
+
+> 이 단순 매칭이 Raw 드롭 스킵(12절)·감사 판정(17절)의 공통 기준이다. LLM·의도분석 금지 원칙 유지.
+
+### 16.2 회의 종료 → Obsidian 반영 트리거 (라우터 책임)
+
+라우터는 Obsidian을 **직접 쓰지 않는다**(원칙 6). A2A `resolved`/`out` 종료 시 Raw에 **종료 마커**만 떨군다. Obsidian 기록은 Gemini 워커가 마커를 보고 수행(eventual).
+
+```javascript
+// A2A 세션이 resolved/out으로 종료될 때 (settled 이후, 6.5 가드 통과 후)
+function onA2ATerminated(sink, envelope, termination) {
+  if (isDM(envelope.context_key)) return;                  // DM은 조직 반영 안 함
+  // 일반 Raw 레코드에 종료 마커를 실어 우선 처리 신호를 준다.
+  sink?.write({
+    timestamp: new Date().toISOString(),
+    marker: 'a2a_resolved',                                // Gemini 워커 우선 처리 신호
+    reason: termination.reason,                            // "resolved" | "out" | limit
+    meta: { space_key: envelope.context_key, speakers: termination.speaker_counts },
+    text: envelope.payload.text
+  }).catch(() => {});                                      // 여전히 fire-and-forget (지식용 sink)
+}
+```
+
+> 반영은 **eventual**. 워커는 폴링 기본 + 이 마커를 우선 처리한다. 즉시 보장 아님.
+> **에이전트 응답 합성은 에이전트 책임**(라우터 코드 아님): 응답 시 `Mem0[agent_id]` + `Obsidian(읽기)` + `SPACE_MEMORY[context_key]`를 합성한다(PRD 4.5/4-A). DM의 에이전트가 Obsidian을 읽어 회의 결정을 알고 대화를 잇는다.
+
+---
+
+## 17. 보안감사 audit-sink 패턴 (v6.12 — PRD 9-D, **Phase 12 계약만·미구현**)
+
+> ⚠️ **[Phase 12 미구현]** 본 절은 계약·골격만. 실제 구현은 Phase 12. 켜기 전(`audit.enabled:false`)엔 없는 것과 동일.
+
+### 17.1 audit-sink는 Raw Sink와 구현이 다르다 (핵심)
+
+지식용 Raw Sink(12절)는 fire-and-forget·휘발 허용·빠름. 감사용은 정반대 — **불변·무손실·동기 쓰기 확인**. 인터페이스(`write`)는 공유하되 구현 분리.
+
+```javascript
+// audit-sink: write 실패를 무시하지 않는다 (Raw Sink와 정반대)
+class AuditSink {
+  async write(record) {
+    // 동기 쓰기 + 확인. 실패 시 throw(무손실 보장). append-only(불변).
+    const ok = await this._appendImmutable(record);        // 구현 Phase 12
+    if (!ok) throw new Error('AUDIT_WRITE_FAILED');         // 무시 금지
+    return ok;
+  }
+  // _appendImmutable: WORM(append-only) 저장. 변조/삭제 불가 보장.
+}
+```
+
+> ❌ `auditSink.write(...).catch(() => {})` — 감사 기록은 실패를 삼키면 안 된다. Raw Sink의 fire-and-forget 패턴을 audit-sink에 쓰지 말 것.
+
+### 17.2 감사 대상 판정 (default-on opt-out)
+
+기본 전수 감사(1), 명시 제외 목록(0)만 면제. "블랙리스트" 아님 — **default-on opt-out**.
+
+```javascript
+// audit 정책은 agents.yaml의 audit 섹션(관리자 전용). 판정은 context_key 매칭.
+function shouldAudit(contextKey, policy) {
+  if (!policy?.enabled) return false;                      // 모듈 OFF
+  if (isDM(contextKey)) return policy.dm === true;         // DM은 별도 토글(기본 false)
+  // DM 외(조직): 전수 감사가 기본, exclusions에 든 space_id만 면제
+  if (!policy.org?.enabled) return false;
+  const spaceId = contextKey.split(':')[2];
+  const excluded = (policy.org.exclusions ?? []).includes(spaceId);
+  return policy.org.default !== false && !excluded;        // default-on, 명시 제외만 0
+}
+```
+
+> **상태↔UI**: `1=감사 대상=UI 체크(기본)` / `0=면제=체크 해제`. 면제는 관리자만.
+> **권한 분리**: 감사 정책 변경은 `/admin/*` 전용. 피감사자 접근·변경 불가(separation of duties).
+> **메타 감사**: 정책 변경 이력(누가·언제·어느 채널 면제)도 audit-sink에 기록.
+> **판정은 단순 매칭**(파싱·LLM 아님) → Dumb Pipe 유지. 정책은 런타임 재로드.
