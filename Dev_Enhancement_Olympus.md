@@ -2,7 +2,7 @@
 
 > 글로벌 지침 + 개발용 지침(본체 1~5) 위에 얹는, Olympus Router 전용 강화 규칙이다.
 > 본체와 충돌하면 이 섹션이 우선한다.
-> **정합 기준: Olympus_PRD_Plan.md v6.11** (VPS 이전 / push→pull 통신모델 / 등록토큰 / /result 통일 / Stateless 완화 / Raw 백엔드 추상화 / 에이전트 SDK 계약(9-A) / tenant_id 키 확장 여지(9-B) / 온보딩(9-C) / Google A2A 관계 명시)
+> **정합 기준: Olympus_PRD_Plan.md v6.12** (VPS 이전 / push→pull / 등록토큰 / /result 통일 / Raw 백엔드 추상화 / 에이전트 SDK(9-A) / tenant_id 키 확장(9-B) / 온보딩(9-C) / Google A2A 관계 / **메모리 라이프사이클(DM=Mem0·DM외=Obsidian, 4-A) / 보안감사 옵션 모듈(9-D)**)
 
 ---
 
@@ -30,6 +30,7 @@
 - **컴포넌트 독립성**: 라우터/어댑터는 Mem0·Obsidian·Gemini를 직접 호출하지 않는다. 유일한 Wiki 접점은 Raw 폴더 드롭(옵션)뿐.
 - **플랫폼 절대 격리**: 플랫폼 간 메시지 교차·A2A 호출 금지.
 - **3축 격리**: 메시지=방마다 격리 / 인격(persona_key=agent_id)=플랫폼 초월 공유 / 지식=플랫폼 초월 공용. persona_key에 플랫폼 prefix 금지.
+- **메모리 라이프사이클 (v6.12)**: DM = Mem0(운영자 사적 보좌, 적립 1:1 한정) / DM 외(그룹·포럼·A2A) = Obsidian(조직 지식). **인격 자체는 공간 무관 항상 Mem0**. 회의 결정의 Obsidian 반영은 라우터 Raw 드롭(DM 스킵) → Gemini 워커 경로로 **eventual**. 라우터·에이전트의 Obsidian 직접 쓰기 금지(컴포넌트 독립성).
 - **PRD 선행**: 작업 시작 전 `Olympus_PRD_Plan.md` 최신 버전을 확인한다. 설계 변경이 필요하면 코드보다 PRD를 먼저 갱신한다.
 - **Admin UI 준비**: 신규 코드 작성 시 향후 관리 UI가 붙을 것을 전제한다. 설정·상태·에이전트 정보는 `/admin/*` API로 노출 가능한 구조로 설계한다.
 - **Agent SDK (v6.10)**: 에이전트는 SDK(`OlympusAgent`) 또는 직접 HTTP 둘 다 가능. SDK는 폴링 루프·토큰 헤더·`/result` 제출·`_source_url` 자동 첨부를 감추는 **편의 레이어일 뿐 필수 아님**. 직접 HTTP로도 동일 계약이 동작해야 한다(T11.4).
@@ -105,6 +106,20 @@
 **비용 급등 시**
 - 라우터 로그에서 A2A round/speaker/session 관련 라인 확인 → A2A 루프 감지. OpenRouter 대시보드와 교차 확인.
 
+### 메모리 라이프사이클 (v6.12 — 운영 관점)
+
+```
+[DM 대화]      → 에이전트가 Mem0[agent_id]에 사적 맥락 적립 (라우터 Raw 드롭 스킵)
+[그룹/회의/A2A] → 라우터 Raw 드롭 → Gemini 워커 → Obsidian (조직 지식)
+[A2A resolved/out] → 라우터가 Raw에 종료 마커 → Gemini 워커 우선 처리 → Obsidian
+[응답 시]      → 에이전트가 Mem0 + Obsidian(읽기) + SPACE 합성
+[연속성]       → DM의 에이전트가 Obsidian을 읽어 회의 결정을 알고 대화를 이어감
+```
+
+- 분기 기준은 `context_key`의 `space_type==dm` 여부(라우터 단순 매칭, 파싱 아님).
+- 반영은 **eventual**: 회의 직후 즉시 DM 참조 보장 아님(Gemini 워커 1회전 후). 즉시성 요구 시 결합도↑ 트레이드오프 발생 → 현재 채택 안 함.
+- DM에서 나온 조직급 결정은 별도 승격 없음 — 조직 결정은 조직 공간에서 내린다(의도적 단순화).
+
 ### 핵심 제약 (v6.8 — 기존 제약 번복 반영)
 
 - 어댑터는 Telegram 수신·게시 담당. 라우터는 Telegram API 직접 호출 금지(어댑터가 게시).
@@ -138,6 +153,9 @@
 - **온보딩 흐름 (v6.10)**: `POST /admin/agents` → 등록 토큰 발급(1회 노출, 이후 조회 불가) → 에이전트 SDK에 `router_url + agent_id + token + source_url` 주입 → `client.start()` → `POST /admin/agents/:id/test`로 폴링 수신 확인. 토큰 분실 시 `/admin/agents/:id/token`으로 재발급(기존 무효화).
 - **agents.yaml git 미추적 (확정)**: `config/agents.yaml`은 `.gitignore` 추적 해제. `config/agents.example.yaml`(공개 구조 템플릿)만 리포에 포함. README에 "복사 후 agents.yaml 작성" 안내 필수.
 - **Google A2A (v6.11)**: Olympus A2A는 독자 규격. Google A2A(Linux Foundation 표준)와 별개. 내부 에이전트 간 통신에 적용하지 않는다. 외부 연동 필요 시 호환 레이어 검토(현재 보류).
+- **메모리 라이프사이클 (v6.12)**: DM=Mem0(사적 보좌, 적립 1:1 한정) / DM외=Obsidian(조직). 인격은 공간 무관 Mem0. 분기는 `space_type==dm`. PRD 6.4 기록 규칙도 공간별 분기로 변경됨(그룹/A2A 결론→Obsidian).
+- **회의→Obsidian 반영 트리거 (v6.12)**: 라우터 Raw 드롭(DM 스킵) → Gemini 워커(폴링 기본 + A2A resolved/out 마커 우선) → Obsidian. eventual. 라우터 직접 쓰기 금지 유지.
+- **보안감사 모듈 (v6.12 — 옵션, Phase 12)**: `audit-sink`는 지식용 Raw Sink와 **구현 분리**(불변·무손실·동기쓰기 vs fire-and-forget·휘발). 정책 yaml은 default-on opt-out(전수 감사 기본, 명시 제외만 면제 / 1=감사·0=면제). 정책 설정·변경은 `/admin/*` 관리자 전용(피감사자 접근 불가). 정책 변경 이력도 audit-sink 기록(메타 감사). **계약만, 구현 별도 Phase 12.**
 
 ---
 
@@ -179,6 +197,16 @@
 
 > S1 로테이션·S7 Admin 인증·S9 로그 마스킹·S10 재전송은 운영/정책 영역이라 단위 테스트보다 점검 체크리스트로 관리 권장.
 
+### 보안감사 모듈 (v6.12 — B2B 옵션, Phase 12 미구현)
+
+> ⚠️ 위 S1~S10은 "공격 방어"다. 본 소절은 별개 목적 — **컴플라이언스 감사**(LLM 대화를 감사 저장 → 배치 감사 → 보고서). 옵션 토글이며 구현은 Phase 12.
+
+- **싱크 분리**: 지식용 Raw Sink(fire-and-forget·휘발 허용)와 달리 `audit-sink`는 **불변·무손실·동기 쓰기 확인**. write 실패를 삼키지 않는다(throw). 인터페이스는 공유, 구현 분리.
+- **정책(관리자 전용)**: `audit.enabled` / `audit.dm`(기본 off) / `audit.org`(전수 감사 기본 = default-on, `exclusions`에 든 채널만 면제 = opt-out). 상태 `1=감사대상=UI체크` / `0=면제=체크해제`. "블랙리스트" 용어 안 씀.
+- **권한 분리(핵심)**: 정책 설정·변경은 `/admin/*` 관리자 전용. **피감사자는 자기 감사를 끌 수 없다**(separation of duties — 안 그러면 감사 무의미). 정책 변경 이력도 audit-sink 기록(메타 감사).
+- **판정**: `context_key` 매칭(Dumb Pipe 유지). 런타임 재로드.
+- **미결(B2B 계약·법규)**: DM 감사 여부·보존기간·보고서 포맷은 고객 계약·개인정보 법규별 결정.
+
 ---
 
 ## 수정 범위 규칙
@@ -191,7 +219,7 @@
 
 ## 헌법 문서
 
-- 이 프로젝트에는 `CLAUDE.md`(헌법), `SKILLS.md`(기술 패턴), `Olympus_PRD_Plan.md`(SSOT, v6.11), `Olympus_Harness.md`(테스트 명세)가 있다.
+- 이 프로젝트에는 `CLAUDE.md`(헌법), `SKILLS.md`(기술 패턴), `Olympus_PRD_Plan.md`(SSOT, v6.12), `Olympus_Harness.md`(테스트 명세)가 있다.
 - 코드와 문서가 충돌하면 문서가 정답이다. 모순 발견 시 코드를 임의 수정하지 말고 보고한다.
 - 최신 상태와 결정사항은 가장 최근 핸드오프 문서의 결정사항 원장을 우선 참조한다.
 
@@ -231,3 +259,12 @@
 | Google A2A | Google 발표·Linux Foundation 이관 표준(`a2a-protocol.org`). Olympus A2A와 별개. 혼용 금지. |
 | 호환 레이어 | 외부 에이전트(타 벤더·프레임워크) 연동 필요 시 Agent Card 노출 + Task 위임 수신 검토. **현재 보류.** |
 | SDK 확장 여지 | SDK에 `/.well-known/agent.json` 노출 인터페이스를 선택적으로 추가할 수 있는 구조로 설계. 현재 구현 대상 아님. |
+
+## 부록: v6.12 메모리 라이프사이클 & 보안감사 (신규 결정)
+
+| 항목 | 내용 |
+|------|------|
+| 4-A 메모리 분기 | DM=Mem0(사적 보좌, 적립 1:1 한정) / DM외=Obsidian(조직). 인격은 공간 무관 Mem0. 분기 `space_type==dm`. |
+| 4.3 반영 트리거 | 라우터 Raw 드롭(DM 스킵) → Gemini 워커(폴링 + resolved/out 마커) → Obsidian. eventual. |
+| 6.4 기록 분기 | A2A 결론 기록처 = DM이면 Mem0 / 그룹·A2A면 Obsidian. (기존 "공간무관 Mem0"에서 변경, T5.14 갱신) |
+| 9-D 보안감사 | audit-sink(불변·무손실, Raw Sink와 구현 분리) / 정책 default-on opt-out(1=감사·0=면제) / 관리자 전용·메타감사 / DM 감사는 B2B 정책. Phase 12. |
