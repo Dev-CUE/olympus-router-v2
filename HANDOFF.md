@@ -2,7 +2,7 @@
 
 > **새 세션은 무조건 이 파일을 먼저 읽는다.** 이 파일은 버전에 묶이지 않는 고정 진입점이며,
 > 작업이 진행될 때마다 최신 상태로 덮어쓴다(영속 SSOT 보조 문서).
-> 최종 갱신: 2026-06-10 | 현재 단계: 하위 문서 v6.11 정합화 (PRD는 이미 v6.11 완료 / SKILLS 완료)
+> 최종 갱신: 2026-06-10 | 현재 단계: 하위 문서 v6.11 정합화 (SKILLS·Harness 완료 / Dev_Enhancement·README 남음)
 
 ---
 
@@ -84,12 +84,13 @@
 |------|----------|-------|
 | Olympus_PRD_Plan.md | v6.11 ✅ | 없음 (SSOT) |
 | CLAUDE.md | v6.10 ✅ | 없음 (HANDOFF 진입점 포함 완료) |
-| SKILLS.md | **v6.11 ✅** | **완료** — 15절 SDK 클라이언트 패턴 추가 / tenant 확장·Google A2A 인라인 (commit a525857) |
-| Olympus_Harness.md | v6.9 | **Phase 8~11 매핑(T11.1~T11.7 등) 추가** + 정합기준 v6.11. 미구현 Phase는 "[v6.10/v6.8 미구현]" 태그 |
+| SKILLS.md | v6.11 ✅ | **완료** — 15절 SDK 클라이언트 패턴 추가 / tenant 확장·Google A2A 인라인 (commit a525857) |
+| Olympus_Harness.md | **v6.11 ✅** | **완료** — Phase 11(T11.1~7) 매핑 추가 / 정합기준 v6.11 (commit b7c1b71) |
 | Dev_Enhancement_Olympus.md | v6.9 | **상용화 골격 + Google A2A 반영** + **리포에 포함**(신규 파일로 push) |
 | README.md | v6.8 | SDK·온보딩·Google A2A 관계 한 줄 + agents.example.yaml 안내 |
+| config/agents.example.yaml | 없음 | **신규 생성** — agents.yaml 공개 템플릿 |
 
-우선순위: Harness → Dev_Enhancement → README (SKILLS 완료)
+우선순위: Dev_Enhancement → README + agents.example.yaml (SKILLS·Harness 완료)
 
 ### 정합화 시 계약 디테일 (실수 방지)
 - **SDK는 필수 아님** — "직접 HTTP로도 동일 동작" 명시.
@@ -103,7 +104,7 @@
 
 1. **Dev_Enhancement 리포 포함?** → **확정: 리포에 포함**(신규 파일로 push).
 2. **agents.yaml git 미추적** → **확정: 미추적 유지 + `config/agents.example.yaml`(공개 템플릿) 추가**. README에 "복사해서 agents.yaml 작성" 안내.
-3. **Harness Phase 8~11 매핑?** → **확정: 추가**. 설계는 됐으나 미구현이므로 "[미구현]" 태그로 명시.
+3. **Harness Phase 8~11 매핑?** → **확정: 완료**. "[미구현]" 태그로 명시됨.
 4. **멀티테넌시 본격 설계** → **확정: 향후 계획**. 이번 작업에서 키 확장 여지(prefix 주입 가능 구조)만 일부 선반영. tenant_id 코드 삽입은 금지.
 5. **Google A2A 표준 호환 레이어** → 보류. 외부 에이전트 연동 필요 시 재검토. SDK Agent Card 확장 여지는 9-A에 명시됨.
 
@@ -135,7 +136,9 @@
 | 2e90360 | CLAUDE.md — HANDOFF 진입점 / v6.10 정합 |
 | cbdfb90 | PRD v6.11 + HANDOFF 갱신 — Google A2A 호환성 |
 | a525857 | SKILLS v6.11 정합 — 15절 SDK 클라이언트 패턴 / tenant 확장·Google A2A 인라인 |
-| (이 커밋) | HANDOFF 갱신 — SKILLS 완료 반영 / 6절 확정값(Dev_Enhancement 리포 포함·agents.example.yaml·Phase 매핑·멀티테넌시 선반영) |
+| e2f8f85 | HANDOFF 되먹임 — SKILLS 완료 / 6절 확정값 반영 |
+| b7c1b71 | Harness v1.3 — Phase 11(T11.1~7) 매핑 / 정합기준 v6.11 |
+| (이 커밋) | HANDOFF 되먹임 — Harness 완료 반영 / 5절 표·우선순위 갱신 |
 
 > `Olympus_Handoff_v610.md`는 구 핸드오프. **본 HANDOFF.md가 최신·정본**.
 
