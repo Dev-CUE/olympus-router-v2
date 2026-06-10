@@ -1,7 +1,8 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.8 (VPS 이전 / push→pull 통신모델 전환 / 등록토큰 / /result 통일 / Stateless 완화)
+> **버전**: v6.9 (Raw 저장 백엔드 추상화 — file 기본 / sqlite 옵션)
 > **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / Phase 8~10 미구현
+> **다음 메이저**: v7.0은 Pull 통신모델이 코드로 실제 전환되는 시점(Phase 10 구현 착수)에 부여한다. v6.5~v6.9는 문서상 설계 변경이며 코드는 아직 옛 구조다.
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
 > **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
 
@@ -64,7 +65,7 @@
 | Zero Agent-side Setup (v6.8) | 에이전트는 라우터 URL + 등록 토큰만 필요. inbound 설정 불필요 |
 | 3-Axis Isolation | 메시지=격리 / 인격=플랫폼 초월 공유 / 지식=플랫폼 초월 공용 |
 | Platform Absolute Isolation | 플랫폼 간 메시지 교차·A2A 절대 차단 |
-| Event-Driven Knowledge | Wiki는 메인 파이프라인과 완전 분리된 비동기 워커 |
+| Event-Driven Knowledge | Wiki는 메인 파이프라인과 완전 분리된 비동기 워커. Raw 저장은 백엔드 추상화(file 기본 / sqlite 옵션) |
 | Router-Owned Limits | A2A 한도는 라우터가 agents.yaml에서 강제 주입. 에이전트 제출값 무시 |
 | Admin-UI Ready | 설정·상태는 `/admin/*` API로 노출 가능한 구조 |
 
@@ -89,7 +90,7 @@
    |  +- Session ID 생성/관리 + Session Store (TTL)
    |  +- A2A 가드 (권한 / 발화자 한도 / 라운드 / 조기종료)
    |  +- /admin/* 관리 API
-   |  +- (옵션) 전 메시지 -> /data/wiki/raw/ 드롭
+   |  +- (옵션) 전 메시지 -> Raw Sink (file/sqlite)
    |
    |  ▲ GET /agents/:id/poll   (에이전트가 일감 가져감, 롱폴링)
    |  ▲ POST /agents/:id/result (에이전트가 결과 제출 → 어댑터 전달)
@@ -105,7 +106,7 @@
   Mem0 (agent_id, 플랫폼 초월 인격/기억)
 
 ============= Async Boundary =============
-[ /data/wiki/raw/ ] --(watch)--> [ Gemini Wiki Engine ] --> [ Obsidian Unified KB ]
+[ Raw Sink: file(JSONL) | sqlite ] --(watch)--> [ Gemini Wiki Engine ] --> [ Obsidian Unified KB ]
 
 ============= 관리 레이어 (향후) =============
 [ Admin UI ] <--> [ /admin/* API ] <--> [ Olympus Router Core ]
@@ -349,7 +350,9 @@ system:
     job_queue_ttl_ms: 600000      # 큐 일감 TTL (미수령 시 만료)
   wiki:
     raw_logging_enabled: false
-    raw_path: "data/wiki/raw/"
+    raw_backend: "file"            # (v6.9) "file" | "sqlite" — Raw 저장 백엔드 선택
+    raw_path: "data/wiki/raw/"     # file 백엔드용 디렉터리
+    sqlite_path: "data/wiki/raw.db"  # sqlite 백엔드용 DB 파일 경로
 
 agents:
   - id: "zeus"
@@ -419,16 +422,24 @@ agents:
 | 컴포넌트 | 역할 | 비고 |
 |----------|------|------|
 | Mem0 | PERSONA(인격/기억), `agent_id` 키 | 에이전트가 직접 연동 |
-| 라우터 Raw 드롭 | 전 메시지 → `data/wiki/raw/` | 옵션(yaml 토글) |
+| 라우터 Raw 드롭 | 전 메시지 → Raw 저장소 | 옵션(yaml 토글). 백엔드: **file 기본 / sqlite 옵션** |
 | Gemini Wiki Engine | Raw 분류/정제 | 트리거 시점 별도 결정 |
 | Obsidian | 조직 공용 지식 저장 | 플랫폼 무관 |
+
+> **Raw 저장 백엔드 (v6.9)**: `raw-sink` 인터페이스 뒤에 백엔드를 교체한다. 기본 `file`(JSONL append), 옵션 `sqlite`. 어느 백엔드든 fire-and-forget·코어 블로킹 금지·컴포넌트 독립성 원칙은 유지된다.
+> **DB 선택 근거**: Raw 드롭은 append 중심 + 배치 읽기, 단일 VPS, 고정 스키마(text만 비정형)다. 별도 서버가 필요한 RDB/NoSQL(PostgreSQL·MongoDB)은 "단순 운영" 의도·컴포넌트 독립성에 역행하므로 **서버리스 SQLite를 옵션 1순위**로 한다. 비정형 text는 SQLite의 TEXT/JSON 컬럼으로 충분하다. PostgreSQL(JSONB)·문서형 NoSQL은 향후 Raw를 본격 검색 인프라로 키우거나 레코드 스키마가 가변화될 경우의 **향후 가능성**으로만 열어둔다(현재 1순위 아님).
+> **외부 의존 제약**: SQLite 구현 시 Node 내장 `node:sqlite`(22+) 우선. 불가 시 외부 라이브러리(`better-sqlite3`) 추가는 별도 승인 필요. SQLite는 동시 쓰기 락이 있으므로 fire-and-forget을 큐 직렬화로 처리한다.
 
 ---
 
 ## 10. 단계별 구현 계획 (Phased Plan + Test Gates)
 
-### Phase 0~7 ✅ (완료)
+### Phase 0~7 ✅ (완료, 단 v6.9 추가분 미구현)
 Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
+
+> **v6.9 Phase 7 추가 (미구현)** — Raw 저장 백엔드 추상화:
+> - [ ] T7.5: `raw_backend:"sqlite"` → SqliteSink로 Raw 기록 (file과 동일 계약)
+> - [ ] T7.6: 백엔드 토글(file↔sqlite) 전환 시 라우터 코드 무수정, fire-and-forget·코어 지연 0 유지
 
 > ⚠️ **v6.8 영향**: Phase 2(병렬 push 디스패치) 관련 테스트는 pull 모델 전환으로 계약이 바뀐다. Phase 10 구현 시 충돌하는 기존 테스트는 1회성 수정 허용(before/after 보고 필수).
 
@@ -476,6 +487,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | poll | (v6.8) 에이전트가 라우터로 일감을 가져가는 롱폴링 요청 (`GET /agents/:id/poll`) |
 | result | (v6.8) 에이전트가 라우터로 결과를 제출하는 요청 (`POST /agents/:id/result`) |
 | 등록 토큰 | (v6.8) 에이전트가 poll/result 시 제시하는 인증 토큰. env로만 관리 |
+| raw-sink | (v6.9) Raw 저장 백엔드 추상화 인터페이스. file/sqlite 교체 가능 |
 | speaker_counts | 발화자별 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
 | over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 |
 | _source_url | A2A 재진입 시 caller 필수 포함 URL. 스푸핑 방지용 |
@@ -517,6 +529,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.6 | Agora 동기화 — 세션ID/Session Store/워키토키/스푸핑 강화/limits 강제 주입 |
 | v6.7 | 다중 사용자(user_id) / Admin UI 준비 설계(8절) / Phase 9 추가 / PRD 선행 원칙 추가 |
 | v6.8 | **대규모 설계 전환** — 라우터+어댑터 VPS Docker 이전 / push→pull(롱폴링) 통신모델 / 에이전트 등록 토큰 / 결과 귀환 `/result` 통일(callback 8798 폐기) / Stateless 0% → Thin Core with Job Queue 완화 / SSH·Tunnel 역방향 등 에이전트측 inbound 폐기 / Phase 10 추가 / 확정결정 5건 번복(16절) |
+| v6.9 | Raw 저장 백엔드 추상화(raw-sink) — file 기본 / sqlite 옵션. DB 1순위 SQLite(서버리스), PostgreSQL·NoSQL은 향후 가능성. node:sqlite 우선·외부의존 별도승인. Phase 7에 T7.5/T7.6 추가. 다음 메이저 v7.0은 Pull 코드 구현 시점 명시 |
 
 ---
 
@@ -526,12 +539,13 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 |------|------|
 | Phase 8 (T5.17~T5.22) | 미완 — Agora session-store 포팅 필요 |
 | Phase 9 (user_id, Admin API) | 미완 — 설계 확정, 구현 대기 |
-| Phase 10 (Pull 통신 전환) | 미완 — 본 v6.8 신규, 구현 대기 |
-| 하위 문서 정합화 | 미완 — CLAUDE.md / SKILLS.md / Dev_Enhancement_Olympus.md를 v6.8에 맞게 갱신 필요 |
+| Phase 10 (Pull 통신 전환) | 미완 — v6.8 신규, 구현 대기 |
+| 하위 문서 정합화 | 완료 — CLAUDE.md / SKILLS.md / Harness / README v6.8 반영, Dev_Enhancement v6.8 별도 산출 |
 | A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
 | Athena Windows 이전 | 위치 무관(pull)이라 제약 완화. 단 실연동 검증 필요 |
 | Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
 | 등록 토큰 발급/배포 절차 | 미정 — env 키 네이밍·로테이션 정책 필요 |
+| Raw SQLite 외부 의존 결정 | 미정 — node:sqlite(내장) vs better-sqlite3(외부). 내장 우선, 외부는 승인 필요 |
 
 ---
 
@@ -539,12 +553,13 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 
 > `[작업금지] 브리핑 → 수정 → 승인` 프로토콜 유지.
 
-1. **하위 문서 정합화** — CLAUDE.md/SKILLS.md/Dev_Enhancement의 "Stateless 0%·push·callback·로컬 고정·SSH" 기술을 v6.8로 갱신 (안 하면 문서 모순)
-2. **Phase 10** — Job Queue + poll/result 엔드포인트 + 등록 토큰 검증 구현
-3. **Phase 8** — Agora session-store 포팅
-4. **Phase 9** — user_id 어댑터 추출 + Admin API
+1. **Phase 10** — Job Queue + poll/result 엔드포인트 + 등록 토큰 검증 구현 (착수 시 v7.0 부여)
+2. **Phase 8** — Agora session-store 포팅
+3. **Phase 9** — user_id 어댑터 추출 + Admin API
+4. **Raw 백엔드** — SqliteSink 구현 (T7.5/T7.6), node:sqlite 가용성 확인
 5. **VPS Docker 이전** — Dockerfile + docker-compose (라우터+어댑터)
-6. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
+6. **보안 [구현필요]** — 토큰↔agent_id 바인딩, job_id 대조, DoS 상한, Admin 인증 (Dev_Enhancement 보안 섹션)
+7. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
 
 ---
 
