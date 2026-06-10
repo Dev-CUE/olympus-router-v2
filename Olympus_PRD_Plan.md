@@ -1,6 +1,6 @@
 # Olympus Router — PRD & Implementation Plan
 
-> **버전**: v6.9 (Raw 저장 백엔드 추상화 — file 기본 / sqlite 옵션)
+> **버전**: v6.10 (상용화 골격 — 에이전트 SDK 계약 / 멀티테넌시 키 확장 / 온보딩 흐름)
 > **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / Phase 8~10 미구현
 > **다음 메이저**: v7.0은 Pull 통신모델이 코드로 실제 전환되는 시점(Phase 10 구현 착수)에 부여한다. v6.5~v6.9는 문서상 설계 변경이며 코드는 아직 옛 구조다.
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
@@ -68,6 +68,8 @@
 | Event-Driven Knowledge | Wiki는 메인 파이프라인과 완전 분리된 비동기 워커. Raw 저장은 백엔드 추상화(file 기본 / sqlite 옵션) |
 | Router-Owned Limits | A2A 한도는 라우터가 agents.yaml에서 강제 주입. 에이전트 제출값 무시 |
 | Admin-UI Ready | 설정·상태는 `/admin/*` API로 노출 가능한 구조 |
+| Agent SDK Contract (v6.10) | 에이전트는 폴링/토큰/result를 직접 짜지 않는다. SDK가 프로토콜을 감춘다 |
+| Tenant-Ready Keys (v6.10) | 모든 격리 키는 향후 `tenant_id` prefix 확장이 가능하게 설계한다(지금은 단일 테넌트) |
 
 > **Stateless 완화 명시**: 기존 "Stateless Ultra-Thin Core (상태 0%)"는 롱폴링 채택으로 폐기되고 "Thin Core with Job Queue"로 대체된다. 라우터는 에이전트별 일감 큐(단기 상태)를 보유한다. 단 텍스트 파싱·LLM 호출·의도 분석 금지는 그대로 유지된다(Dumb Pipe의 본질).
 
@@ -99,7 +101,7 @@
    +--------------+--------------+
    ↑              ↑              ↑   (outbound 롱폴링만, inbound 불필요)
 [ Agent A(to) ] [ Agent B(to) ] [ Agent C(cc) ]   <- Brain (위치 무관)
-   |  +- 라우터 URL + 등록 토큰만 보유
+   |  +- 라우터 URL + 등록 토큰만 보유 (또는 Agent SDK 사용)
    |  +- A2A 필요 시 라우터로 재진입 (_source_url 필수)
    |  +- over/out/resolved 신호로 종료 선언
    |
@@ -380,10 +382,11 @@ agents:
 | 엔드포인트 | 용도 |
 |-----------|------|
 | `GET /admin/agents` | 등록된 에이전트 목록 + **폴링 연결 상태** 집계 |
-| `POST /admin/agents` | 에이전트 등록 (yaml 반영) |
+| `POST /admin/agents` | 에이전트 등록 (yaml 반영) + 등록 토큰 발급(1회 노출) |
 | `PUT /admin/agents/:id` | 에이전트 수정 |
 | `DELETE /admin/agents/:id` | 에이전트 삭제 |
 | `POST /admin/agents/:id/test` | **연결 테스트** — pull 모델에선 "최근 폴링 수신 여부"로 판정 |
+| `POST /admin/agents/:id/token` | **토큰 재발급** — 기존 무효화 + 신규 발급(1회 노출) (v6.10) |
 | `POST /admin/dry-run` | **라우팅 dry-run** — 실제 전송 없이 라우팅 경로 + 에이전트 폴링 활성 여부 검증 |
 | `GET /admin/sessions` | 현재 활성 A2A 세션 목록 |
 | `GET /admin/queues` | 에이전트별 큐 적재 현황 (v6.8 신규) |
@@ -410,7 +413,7 @@ agents:
 > **헬스 판정 변화 (push→pull)**: 기존 dry-run은 라우터가 에이전트로 ping(reachable) 했으나, pull 모델에선 라우터가 에이전트를 호출하지 않으므로 **"최근 폴링 수신 여부(`last_poll_ms_ago`)"** 로 살아있음을 판정한다.
 
 ### 8.3 설계 원칙
-- **민감값 분리**: 토큰·시크릿은 env로만. yaml/API에 노출 금지.
+- **민감값 분리**: 토큰·시크릿은 env로만. yaml/API에 노출 금지(발급/재발급 응답에서만 1회 노출).
 - **세팅 즉시 테스트**: 에이전트 등록 → `/admin/agents/:id/test`로 폴링 수신 확인.
 - **상태 가시성**: session_store, job queue, idempotency_store 현황을 Admin API로 조회 가능.
 - **registry 런타임 재로드**: agents.yaml 변경 시 재시작 없이 반영.
@@ -429,6 +432,95 @@ agents:
 > **Raw 저장 백엔드 (v6.9)**: `raw-sink` 인터페이스 뒤에 백엔드를 교체한다. 기본 `file`(JSONL append), 옵션 `sqlite`. 어느 백엔드든 fire-and-forget·코어 블로킹 금지·컴포넌트 독립성 원칙은 유지된다.
 > **DB 선택 근거**: Raw 드롭은 append 중심 + 배치 읽기, 단일 VPS, 고정 스키마(text만 비정형)다. 별도 서버가 필요한 RDB/NoSQL(PostgreSQL·MongoDB)은 "단순 운영" 의도·컴포넌트 독립성에 역행하므로 **서버리스 SQLite를 옵션 1순위**로 한다. 비정형 text는 SQLite의 TEXT/JSON 컬럼으로 충분하다. PostgreSQL(JSONB)·문서형 NoSQL은 향후 Raw를 본격 검색 인프라로 키우거나 레코드 스키마가 가변화될 경우의 **향후 가능성**으로만 열어둔다(현재 1순위 아님).
 > **외부 의존 제약**: SQLite 구현 시 Node 내장 `node:sqlite`(22+) 우선. 불가 시 외부 라이브러리(`better-sqlite3`) 추가는 별도 승인 필요. SQLite는 동시 쓰기 락이 있으므로 fire-and-forget을 큐 직렬화로 처리한다.
+
+---
+
+## 9-A. 에이전트 SDK 계약 (v6.10 — 규격만, 구현은 Phase 11)
+
+에이전트 개발자가 폴링 루프·토큰 헤더·`/result` 제출·재폴링을 직접 구현하지 않도록, SDK가 라우터 통신 프로토콜을 감춘다. **본 절은 계약(인터페이스)만 정의한다. 실제 SDK 코드는 Phase 11.**
+
+### 9-A.1 SDK가 감추는 것 (에이전트 개발자가 몰라도 되는 것)
+- 롱폴링 루프 (`GET /agents/:id/poll`, 204 시 즉시 재폴링)
+- `Authorization: Bearer <등록 토큰>` 헤더 부착
+- 결과 제출 (`POST /agents/:id/result`, `{job_id, result}`)
+- A2A 재진입 시 `payload._source_url` 자동 첨부
+- 네트워크 단절 시 백오프 재접속
+
+### 9-A.2 SDK 노출 인터페이스 (언어 무관 의사 규격)
+```
+client = OlympusAgent({
+  router_url,        // 라우터 단일 진입점 (예: https://router.frameq.io)
+  agent_id,          // 이 에이전트의 id (registry 등록값과 일치)
+  token,             // 등록 토큰 (env에서 주입, SDK가 헤더 처리)
+  source_url         // 이 에이전트 자신의 URL (A2A _source_url 자동 첨부용)
+})
+
+client.onJob(async (envelope) => {
+  // 에이전트는 일감 처리에만 집중한다. 통신은 SDK가 처리.
+  return {
+    status: "success",
+    response_text: "...",
+    a2a_status: "resolved" | "out" | "continue",
+    activities: [ ... ]
+  }
+})
+
+client.start()   // 폴링 시작. 이후 onJob 핸들러가 자동 호출됨.
+client.stop()
+```
+
+> 에이전트는 `onJob` 핸들러만 구현하면 된다. "라우터 URL + agent_id + token + source_url" 4개 설정값이 전부.
+> SDK는 핸들러 반환값을 그대로 `/result`로 제출한다. 핸들러 예외 시 SDK가 error result로 변환해 제출(라우터가 어댑터로 실패 전달).
+
+### 9-A.3 참조 구현 & 호환
+- 참조 구현 언어: **Node.js** (1차). 라우터와 동일 스택.
+- 타 언어(Python 등)는 본 계약(폴링·헤더·result·_source_url)을 준수하면 호환. SDK 없이 직접 HTTP로도 동일 동작 가능(SDK는 편의 레이어일 뿐, 필수 아님).
+
+---
+
+## 9-B. 멀티테넌시 — 키 확장만 (v6.10 — 최소 반영, 본격 설계 아님)
+
+> **현재는 단일 테넌트 전제.** 본격적인 멀티테넌시(테넌트별 격리·과금·권한)는 구현하지 않는다.
+> 다만 **나중에 테넌트를 도입할 때 키 구조를 갈아엎지 않도록**, 격리 키에 `tenant_id` prefix를 끼울 자리만 열어둔다.
+
+### 9-B.1 키 확장 규약 (지금은 미사용, 자리만 예약)
+```
+context_key  (현재) {platform}:{space_type}:{space_id}:{topic_id}
+             (확장) {tenant_id}:{platform}:{space_type}:{space_id}:{topic_id}
+
+persona_key  (현재) {agent_id}
+             (확장) {tenant_id}:{agent_id}    ← 단, 플랫폼 prefix 금지 원칙은 유지
+
+session_id   (현재) legacy:{platform}:{context_key}:{origin_agent}
+             (확장) {tenant_id}:... 접두
+```
+
+### 9-B.2 최소 반영 원칙 (과설계 방지)
+- 지금 코드에 `tenant_id`를 **넣지 않는다.** 단일 테넌트는 `tenant_id` 없이 동작.
+- 키 생성 함수를 **prefix 주입이 가능한 형태**로만 유지한다(하드코딩된 키 조립 금지).
+- 향후 도입 시: 키 생성 지점 1곳에 prefix 추가 + registry를 테넌트별로 분리. 그 외 로직 무변경이 목표.
+- agents.yaml은 향후 테넌트별 파일 분리 가능하게, 단일 파일 로딩을 "디렉터리 스캔"으로 바꿀 수 있는 여지만 남긴다(지금은 단일 파일).
+
+> 즉 v6.10은 "멀티테넌시를 한다"가 아니라 "나중에 할 때 키를 안 갈아엎는다"만 보장한다.
+
+---
+
+## 9-C. 온보딩 흐름 (v6.10 — Admin API 기반)
+
+신규 에이전트를 추가 설정 없이 합류시키는 흐름. 기존 8절 Admin API + 9-A SDK를 엮는다.
+
+```
+1. [운영자] Admin에서 에이전트 생성: POST /admin/agents { id, url }
+              → 라우터가 등록 토큰 발급 (env에 기록, API 응답에는 1회만 노출)
+2. [운영자] 발급된 토큰을 에이전트 SDK 설정에 주입 (router_url + agent_id + token + source_url)
+3. [에이전트] client.start() → 폴링 시작
+4. [운영자] POST /admin/agents/:id/test → 폴링 수신 확인 (last_poll_ms_ago)
+              → 수신 확인되면 "온보딩 완료". 안 되면 토큰/네트워크 점검 안내.
+5. 이후 해당 에이전트는 to/cc 라우팅 대상에 자동 포함.
+```
+
+> 온보딩 성공 판정 = "최근 폴링 수신". push 모델이 아니므로 라우터가 에이전트를 부르지 않는다.
+> 토큰은 발급 시 1회만 노출, 이후 조회 불가(env 보관). 분실 시 `/admin/agents/:id/token`으로 재발급.
 
 ---
 
@@ -472,6 +564,15 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 - [ ] T10.9: 큐 일감 TTL 만료 → 미수령 일감 제거 + warning 로그
 - [ ] T10.10: (실연동) 실제 에이전트 1기 DM/그룹 실메시지 왕복 — mock 통과는 완료 불인정
 
+### Phase 11 — 상용화 골격 (v6.10 신규, 미구현)
+- [ ] T11.1: 에이전트 SDK(Node) — connect/onJob/start로 폴링·토큰·result 자동 처리
+- [ ] T11.2: SDK가 핸들러 예외를 error result로 변환·제출
+- [ ] T11.3: SDK가 A2A 재진입 시 `_source_url` 자동 첨부
+- [ ] T11.4: SDK 없이 직접 HTTP로도 동일 계약 동작 (호환성)
+- [ ] T11.5: 키 생성 함수가 tenant_id prefix 주입 가능한 구조 (단일 테넌트는 prefix 없이 동작)
+- [ ] T11.6: 온보딩 — POST /admin/agents 시 토큰 발급(1회 노출), /admin/agents/:id/test로 폴링 수신 확인
+- [ ] T11.7: 토큰 재발급 — 분실 시 기존 무효화 + 신규 발급
+
 ---
 
 ## 11. 용어집 (Glossary)
@@ -488,6 +589,9 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | result | (v6.8) 에이전트가 라우터로 결과를 제출하는 요청 (`POST /agents/:id/result`) |
 | 등록 토큰 | (v6.8) 에이전트가 poll/result 시 제시하는 인증 토큰. env로만 관리 |
 | raw-sink | (v6.9) Raw 저장 백엔드 추상화 인터페이스. file/sqlite 교체 가능 |
+| Agent SDK | (v6.10) 폴링·토큰·result·_source_url을 감추는 에이전트측 편의 레이어. 필수 아님(직접 HTTP 가능) |
+| tenant_id | (v6.10) 향후 멀티테넌시용 격리 prefix. 현재 미사용, 키 확장 자리만 예약 |
+| 온보딩 | (v6.10) 에이전트 등록→토큰 발급→SDK 주입→폴링 확인 흐름 |
 | speaker_counts | 발화자별 호출 카운트 (에이전트당 최대 10회). session_store가 SSOT |
 | over/out | 워키토키 프로토콜 — `a2a_status:"resolved"` 또는 `"out"` 으로 세션 종료 |
 | _source_url | A2A 재진입 시 caller 필수 포함 URL. 스푸핑 방지용 |
@@ -504,6 +608,8 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | 코드 | 의미 |
 |------|------|
 | `UNKNOWN_AGENT` | routing 대상이 registry에 없음 |
+| `UNKNOWN_JOB` | (v6.8) result 제출 시 미발급/소비된 job_id |
+| `UNAUTHORIZED_POLL` | (v6.8) poll/result 토큰 누락·불일치 (HTTP 401) |
 | `A2A_INITIATION_DENIED` | can_initiate:false 에이전트가 A2A 시도 |
 | `A2A_UNAUTHORIZED` | allowed_targets 위반 |
 | `A2A_SELF_CALL` | 자기 자신 호출 |
@@ -512,7 +618,6 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | `A2A_SPEAKER_LIMIT_EXCEEDED` | 발화자 10회 초과 |
 | `A2A_ROUND_LIMIT_EXCEEDED` | DIALOGUE 10라운드 초과 |
 | `A2A_EARLY_TERMINATION` | resolved/out 정상 조기종료 |
-| `UNAUTHORIZED_POLL` (v6.8) | poll/result 토큰 누락·불일치 (HTTP 401) |
 
 ---
 
@@ -530,6 +635,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.7 | 다중 사용자(user_id) / Admin UI 준비 설계(8절) / Phase 9 추가 / PRD 선행 원칙 추가 |
 | v6.8 | **대규모 설계 전환** — 라우터+어댑터 VPS Docker 이전 / push→pull(롱폴링) 통신모델 / 에이전트 등록 토큰 / 결과 귀환 `/result` 통일(callback 8798 폐기) / Stateless 0% → Thin Core with Job Queue 완화 / SSH·Tunnel 역방향 등 에이전트측 inbound 폐기 / Phase 10 추가 / 확정결정 5건 번복(16절) |
 | v6.9 | Raw 저장 백엔드 추상화(raw-sink) — file 기본 / sqlite 옵션. DB 1순위 SQLite(서버리스), PostgreSQL·NoSQL은 향후 가능성. node:sqlite 우선·외부의존 별도승인. Phase 7에 T7.5/T7.6 추가. 다음 메이저 v7.0은 Pull 코드 구현 시점 명시 |
+| v6.10 | 상용화 골격 — 에이전트 SDK 계약(9-A, 규격만) / 멀티테넌시 키 확장 최소반영(9-B, tenant_id 자리만 예약·본격설계 아님) / 온보딩 흐름(9-C) / Phase 11(T11.1~T11.7) 추가. 원칙표에 Agent SDK Contract·Tenant-Ready Keys 추가. 에러코드에 UNKNOWN_JOB·UNAUTHORIZED_POLL 정합 / Admin에 토큰 재발급 엔드포인트 추가 |
 
 ---
 
@@ -540,12 +646,14 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | Phase 8 (T5.17~T5.22) | 미완 — Agora session-store 포팅 필요 |
 | Phase 9 (user_id, Admin API) | 미완 — 설계 확정, 구현 대기 |
 | Phase 10 (Pull 통신 전환) | 미완 — v6.8 신규, 구현 대기 |
-| 하위 문서 정합화 | 완료 — CLAUDE.md / SKILLS.md / Harness / README v6.8 반영, Dev_Enhancement v6.8 별도 산출 |
+| Phase 11 (상용화 골격) | 미완 — SDK·멀티테넌시 키·온보딩. 단 코드 우선순위는 Phase 8~10(실구현·보안) 이후 |
+| 하위 문서 정합화 | 완료 — CLAUDE.md / SKILLS.md / Harness / README v6.8~v6.9 반영, Dev_Enhancement 별도 산출 |
 | A2A 병렬 실제 검증 | mock 통과, 실제 에이전트 연동 검증 필요 |
 | Athena Windows 이전 | 위치 무관(pull)이라 제약 완화. 단 실연동 검증 필요 |
 | Gemini Wiki 트리거 시점 | Wiki 설정 시점에 결정 |
 | 등록 토큰 발급/배포 절차 | 미정 — env 키 네이밍·로테이션 정책 필요 |
 | Raw SQLite 외부 의존 결정 | 미정 — node:sqlite(내장) vs better-sqlite3(외부). 내장 우선, 외부는 승인 필요 |
+| 멀티테넌시 본격 설계 | 보류 — v6.10은 키 확장 자리만. 테넌트별 격리·과금·권한은 별도 결정 |
 
 ---
 
@@ -559,7 +667,8 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 4. **Raw 백엔드** — SqliteSink 구현 (T7.5/T7.6), node:sqlite 가용성 확인
 5. **VPS Docker 이전** — Dockerfile + docker-compose (라우터+어댑터)
 6. **보안 [구현필요]** — 토큰↔agent_id 바인딩, job_id 대조, DoS 상한, Admin 인증 (Dev_Enhancement 보안 섹션)
-7. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
+7. **Phase 11** — 에이전트 SDK + 온보딩 (실구현·보안 이후)
+8. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
 
 ---
 
