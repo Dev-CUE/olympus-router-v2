@@ -3,3 +3,4 @@ harness/tmp/
 data/wiki/raw/
 *.log
 .env
+.env.webhook

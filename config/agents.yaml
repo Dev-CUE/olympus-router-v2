@@ -11,11 +11,11 @@ system:
 
 agents:
   - id: "zeus"
-    url: "http://zeus-agent:3001"
+    url: "http://127.0.0.1:9001"
     a2a: { can_initiate: true,  allowed_targets: "*" }
   - id: "hera"
-    url: "http://hera-agent:3002"
+    url: "http://127.0.0.1:9002"
     a2a: { can_initiate: true,  allowed_targets: "*" }
   - id: "athena"
-    url: "http://athena-agent:3003"
+    url: "http://127.0.0.1:9003"
     a2a: { can_initiate: true, allowed_targets: "*" }

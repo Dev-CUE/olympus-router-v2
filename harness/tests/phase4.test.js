@@ -24,11 +24,11 @@ test('T4.1 — context_key가 다른 두 요청의 space_key 격리 (MESSAGE 격
 
   captured = [];
   await route(envA);
-  const spaceA = captured[0].body.memory_scope.space_key;
+  const spaceA = captured[0].body.route_context.session_key;
 
   captured = [];
   await route(envB);
-  const spaceB = captured[0].body.memory_scope.space_key;
+  const spaceB = captured[0].body.route_context.session_key;
 
   assert.notStrictEqual(spaceA, spaceB);
   assert.strictEqual(spaceA, 'slack:channel:C1:root');
@@ -42,11 +42,11 @@ test('T4.2 — 슬랙·텔레그램 동일 에이전트의 persona_key 동일 (P
 
   captured = [];
   await route(slackEnv);
-  const slackPersona = captured[0].body.memory_scope.persona_key;
+  const slackPersona = captured[0].body.route_context.persona;
 
   captured = [];
   await route(tgEnv);
-  const tgPersona = captured[0].body.memory_scope.persona_key;
+  const tgPersona = captured[0].body.route_context.persona;
 
   assert.strictEqual(slackPersona, tgPersona);
   assert.strictEqual(slackPersona, 'agentA');
@@ -59,11 +59,11 @@ test('T4.3 — 텔레그램 space_key가 슬랙 space_key로 새지 않음', asy
 
   captured = [];
   await route(slackEnv);
-  const slackSpace = captured[0].body.memory_scope.space_key;
+  const slackSpace = captured[0].body.route_context.session_key;
 
   captured = [];
   await route(tgEnv);
-  const tgSpace = captured[0].body.memory_scope.space_key;
+  const tgSpace = captured[0].body.route_context.session_key;
 
   assert.notStrictEqual(slackSpace, tgSpace);
 });
@@ -71,7 +71,7 @@ test('T4.3 — 텔레그램 space_key가 슬랙 space_key로 새지 않음', asy
 // T4.4
 test('T4.4 — to persona_key 형식 = agent_id (플랫폼 prefix ":" 없음)', async () => {
   await route({ context_key: 'telegram:dm:123:root', routing: { to: ['agentA'], cc: [] } });
-  const personaKey = captured[0].body.memory_scope.persona_key;
+  const personaKey = captured[0].body.route_context.persona;
   assert.ok(!String(personaKey).includes(':'), 'persona_key에 ":" 포함 금지');
   assert.strictEqual(personaKey, 'agentA');
 });
@@ -84,7 +84,8 @@ test('T4.5 — cc 에이전트의 persona_key === null', async () => {
   });
   const ccCapture = captured.find(c => c.url.includes('9402'));
   assert.ok(ccCapture, 'cc 에이전트(agentB)가 호출됨');
-  assert.strictEqual(ccCapture.body.memory_scope.persona_key, null);
+  assert.strictEqual(ccCapture.body.route_context.persona, null);
+  assert.strictEqual(ccCapture.body.reason, 'cc');
   assert.strictEqual(ccCapture.body.is_cc_only, true);
   assert.strictEqual(ccCapture.body.mode, 'listen_only');
 });

@@ -30,7 +30,8 @@ test('T1.3 — 미존재 에이전트 거부 → UNKNOWN_AGENT', async () => {
   );
 });
 
-test('T1.5 — route({to:[valid]}) → results[0].status === "routed"', async () => {
+test('T1.5 — route({to:[valid]}) → results[0].status === "success"', async () => {
+  global.fetch = async (_url, _opts) => ({ ok: true, json: async () => ({ ok: true }) });
   const result = await route({
     context_key: 'telegram:group:C123:root',
     routing: { to: [registry.getAllIds()[0]], cc: [] },
@@ -39,5 +40,5 @@ test('T1.5 — route({to:[valid]}) → results[0].status === "routed"', async ()
   });
 
   assert.strictEqual(result.ok, true);
-  assert.strictEqual(result.results[0].status, 'routed');
+  assert.strictEqual(result.results[0].status, 'success');
 });
