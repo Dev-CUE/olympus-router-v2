@@ -4,7 +4,7 @@
 
 라우터는 메시지를 격리하고, 에이전트 인격은 플랫폼 초월 공유하며, 에이전트 간 협업(A2A)을 안전하게 중개한다.
 
-> **설계 기준: PRD v6.11** — 라우터+어댑터는 VPS Docker에서 구동하고, 에이전트는 위치 무관(외부 접속 전제)으로 라우터에 **롱폴링(pull)** 하여 일감을 받고 결과를 제출한다. SDK(9-A) / tenant 키 확장 여지(9-B) / Google A2A 관계 명시(v6.11).
+> **설계 기준: PRD v6.12** — 라우터+어댑터는 VPS Docker에서 구동하고, 에이전트는 위치 무관(외부 접속 전제)으로 라우터에 **롱폴링(pull)** 하여 일감을 받고 결과를 제출한다. SDK(9-A) / tenant 키 확장 여지(9-B) / Google A2A 관계(v6.11) / 메모리 라이프사이클·보안감사 옵션(v6.12).
 
 ---
 
@@ -30,6 +30,8 @@
 
 > `persona_key: "telegram:zeus"` ❌ — 플랫폼 prefix 금지
 > `persona_key: "zeus"` ✅
+>
+> **(v6.12) 메모리 라이프사이클**: DM = Mem0(사적 보좌) / DM 외 회의·협업 = Obsidian(조직 지식). 인격 자체는 공간 무관 항상 Mem0. 회의 결정은 Raw→Gemini 경로로 Obsidian에 eventual 반영되고, DM의 에이전트가 이를 읽어 대화를 잇는다.
 
 ---
 
@@ -70,7 +72,7 @@ olympus-router/
 │   └── discord-adapter.js
 └── harness/
     ├── fixtures/             # 테스트용 YAML 설정
-    └── tests/                # Phase 1~11 단위 테스트 + E2E 통합 테스트
+    └── tests/                # Phase 1~12 단위 테스트 + E2E 통합 테스트
 ```
 
 > `job-queue.js` / `auth-token.js`는 v6.8 Phase 10에서 신설 예정.
@@ -165,13 +167,13 @@ node --test harness/tests/e2e.test.js
 grep -rE '\b(zeus|hera|athena)\b' router-core/ adapters/ registry/
 ```
 
-> Phase 1~7 + E2E 완료(55/55). Phase 8~11(Agora 동기화 / 다중 사용자·Admin / Pull 통신·보안 / SDK·상용화 골격)은 미구현.
+> Phase 1~7 + E2E 완료(55/55). Phase 8~12(Agora 동기화 / 다중 사용자·Admin / Pull 통신·보안 / SDK·상용화 골격 / 보안감사 모듈)은 미구현.
 
 ---
 
 ## 관련 문서
 
-- [PRD v6.11](Olympus_PRD_Plan.md) — 설계 전체 명세(SSOT)
+- [PRD v6.12](Olympus_PRD_Plan.md) — 설계 전체 명세(SSOT)
 - [SKILLS.md](SKILLS.md) — 기술 컨벤션 & 패턴
 - [Olympus_Harness.md](Olympus_Harness.md) — 테스트 하네스 명세
 - [Dev_Enhancement_Olympus.md](Dev_Enhancement_Olympus.md) — 운영 시나리오 & 보안 매트릭스
