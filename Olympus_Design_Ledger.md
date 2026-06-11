@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17 확정 / 잔여: L18·L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18 확정 / 잔여: L22·L23·LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→**L18→L19(완료)→L22→L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→L18(완료)→L19(완료)→**L22→L23** / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
 | **LB** | B군 모순 해소 — 아래 4건 일괄 | 최후 |
@@ -141,7 +140,7 @@ system:
 
 - **발급**: 라우터 단독 ULID 발급. legacy 조합형 폐기 (D10 해소)
 - **검증 3중**: ①A2A_INVALID_SESSION(not_found|expired|closed) ②A2A_NOT_PARTICIPANT ③context_key 불일치
-- **레코드**: session_id, context_key, origin_agent, participants[{agent_id, role}], mode, round, speaker_counts, status, created_at, last_activity, topic, parent_session_id, tenant(예약)
+- **레코드**: session_id, context_key, origin_agent, participants[{agent_id, role}], mode, round, speaker_counts, status, created_at, last_activity, topic, parent_session_id, tenant_id(L18 확정 — 항상 존재, 단일은 default)
 - **SSOT**: speaker_counts·round = 세션 레코드. 에이전트 제출값 무시
 - **영속화**: #1과 동일 SQLite sessions 테이블. 재시작 복구 트랜잭션 포함
 - **TTL**: sliding idle 1h + absolute cap 24h. 만료 시 A2A_SESSION_EXPIRED 통지
@@ -258,37 +257,35 @@ system:
 - **감사 연계**: write → #9 audit admin 이벤트
 - **테스트**: T9.8~12
 
-### [#L21] rate limit·quota — 유량 제어 계약 (확정)
+### [#L21] rate limit·quota — 유량 제어 계약 (확정 — L18 정합 갱신)
 
 > 라우터 인입 경계의 유량 보호. **인프라 가용성 보호 장치**이지 보안 게이트가 아니다(인증 #2와 레이어 구분).
 
-- **제어 키 (D-L21-1 확정)**: **agent_id 단위만 L21에서 확정.** agent_id는 #2 토큰에서 도출되므로 위조 불가. **tenant_id 단위는 키 계약·범위 미확정(L18 소관) — 구조만 예약**, 수치는 L18 확정 후. tenant quota를 L21에서 정하면 L18 재작업 발생하므로 이관.
-- **알고리즘**: **token bucket**. 키당 (tokens, last_refill) 2값 — 경량. fixed window(경계 버스트 취약)·sliding log(메모리 비쌈) 기각. 근거: A2A DIALOGUE는 라운드 버스트성이라 고정 윈도우 부적합.
+- **제어 키**: **agent_id 단위.** L18 tenant 키 계약 확정 후, 키는 `{tenant_id}:{agent_id}` 형태로 자연 확장(단일 테넌트는 `default:{agent_id}`). tenant별 rate limit·quota 수치 override는 L18 키 위에서 가능 — 별도 tenant 재작업 불요(L18에서 회수 완료).
+- **알고리즘**: **token bucket**. 키당 (tokens, last_refill) 2값 — 경량. fixed window·sliding log 기각. 근거: A2A DIALOGUE 라운드 버스트성.
 - **rate limit vs quota 2층 분리**:
   - **rate limit**: 초/분 순간 유량(버킷). 초과 시 `RATE_LIMITED` 429 + `Retry-After`.
-  - **quota**: 시간·일 누적 총량. 초과 시 `QUOTA_EXCEEDED` 429 + 리셋 시각. 윈도우 리셋까지 차단.
-- **quota 계량 단위 (D-L21-2 확정)**: **건수 기반.** 비용(OpenRouter 토큰 환산) 기반은 라우터가 모델 사용량을 해석해야 해 **Dumb Pipe 위반**이라 기각. 비용 기반은 에이전트/SDK 자체 보고 별도 레이어로 미룸(L21 비범위).
-- **cc(listen) 계상 (리스크5 확정)**: **rate limit은 cc 포함 적용**(인입은 인입). **quota 건수는 to만 카운트** — cc는 사용자 의도 1건의 부수효과라 중복 계상하지 않음.
-- **영속성**:
-  - rate limit 버킷 = **인메모리.** 재시작 시 버킷 가득 찬 상태로 복원(안전측, 유실 무해). 재시작 복구 트랜잭션 불포함.
-  - quota 카운터 = **영속**(#1/#6과 동일 SQLite `quota_usage` 테이블: key, window_start, count). 재시작에 0 리셋되면 한도 우회 가능 → 영속 필수. 단순 조회 테이블이라 복구 트랜잭션 회수 로직 불요.
-- **fail 모드 (D-L21-3 확정)**: **fail-open.** quota 카운터 저장소 장애 시 통과. 근거: 유량 제어는 **가용성** 보호라, 카운터 DB 장애가 전체 정지로 번지면 안 됨. **인증(#2)=보안=fail-closed / 유량(L21)=가용성=fail-open — 명문 구분**(표면 상충 아님).
-- **A2A 경로**: rate limit 걸리면 세션 중단이 아니라 **해당 호출만 429**. 재시도는 에이전트 SDK 백오프(G6)에 위임. A2A 내부 speaker_counts(10회, #6)는 "회의 독주 방지" 레이어, L21은 "인프라 유량 보호" 레이어 — **별개**(혼동 사전 박제).
+  - **quota**: 시간·일 누적 총량. 초과 시 `QUOTA_EXCEEDED` 429 + 리셋 시각.
+- **quota 계량 단위**: **건수 기반.** 비용 기반은 Dumb Pipe 위반이라 기각.
+- **cc(listen) 계상**: **rate limit은 cc 포함 적용**, **quota 건수는 to만 카운트**.
+- **영속성**: rate limit 버킷=인메모리(재시작 가득 복원). quota 카운터=영속(SQLite `quota_usage`: key, window_start, count). key는 L18 정규화 키.
+- **fail 모드**: **fail-open.** 인증(#2)=보안=fail-closed / 유량(L21)=가용성=fail-open 명문 구분.
+- **A2A 경로**: rate limit 시 해당 호출만 429, 세션 미파괴. speaker_counts(#6, 회의 독주 방지)와 별 레이어.
 - **설정안**:
 ```yaml
 system:
   rate_limit:
     enabled: true
     default:
-      rate: { capacity: 60, refill_per_sec: 1 }   # 버킷 60, 초당 1 리필
+      rate: { capacity: 60, refill_per_sec: 1 }
       quota: { window: "1d", max_requests: 10000 }
-    overrides:                                       # agent_id별 재정의
+    overrides:                                       # {tenant}:{agent} 또는 agent_id별
       - agent_id: "zeus"
         rate: { capacity: 120, refill_per_sec: 2 }
-    fail_mode: "open"                                # 카운터 장애 시 통과
+    fail_mode: "open"
 ```
-- **신규 에러코드**: `RATE_LIMITED`(429+Retry-After), `QUOTA_EXCEEDED`(429+리셋시각)
-- **테스트 (TR 대역 신설)**: TR.1 버킷 소진 후 429 / TR.2 Retry-After 정확성 / TR.3 quota 윈도우 리셋 / TR.4 재시작 후 quota 카운터 유지(영속) / TR.5 fail-open 동작 / TR.6 override 적용 / TR.7 A2A 429가 세션 미파괴 / TR.8 cc는 rate limit 적용·quota 비계상
+- **신규 에러코드**: `RATE_LIMITED`, `QUOTA_EXCEEDED`
+- **테스트 (TR 대역)**: TR.1~8 (버킷 소진 429 / Retry-After / quota 리셋 / 재시작 영속 / fail-open / override / A2A 세션 미파괴 / cc 비계상). TR.6 override는 L18 tenant 키 정합 포함.
 
 ### [#L20] SLO·관측성 — 지표·알람·SLO (확정)
 
@@ -354,6 +351,30 @@ system:
 - **확장 메모 — 계층 2 (대고객 서비스 DB, 설계 안 함·자리만)**: 회원·가입·구독·결제·테넌트는 **별도 서브프로젝트**. **PostgreSQL급 RDB**(조인이 본질), **별도 DB로 격리**. 라우터는 계층 2 직접 호출 금지(원칙 6). 멀티테넌시(9-B) tenant 키가 계층 2에서 실체화될 접점. 대시보드 사업 지표(가입자·매출·구독)는 계층 2 별도 데이터 소스 — L20 운영 metrics와 구분. **이번 코어 설계가 이를 막지 않음만 보장**(현 단계 = 코어 검증 우선).
 - **테스트 (TS 대역 신설, D-L17-4)**: TS.1 WAL 모드 활성 확인 / TS.2 쓰기 중 읽기 비차단 / TS.3 단일 writer 직렬화로 SQLITE_BUSY 미발생 / TS.4 busy_timeout 동작 / TS.5 단일 queue.db 원자 복구 / TS.6 audit·raw 파일 분리 / TS.7 user_version 마이그레이션 게이트 / TS.8 저장소 인터페이스 백엔드 교체 시 코어 무수정
 
+### [#L18] tenant_id 구체화 — 키 계약·범위 (확정)
+
+> 범위 = **키 계약만**(D-L18-1 확정). tenant **발급·인증·과금**은 대고객 서비스(서브프로젝트, L17 계층 2)의 책임. 코어는 "tenant_id를 격리 키에 끼우는 규칙"만 안다. PRD 9-B "본격 멀티테넌시 안 함, 키 자리만"의 구체화이지 멀티테넌시 구현이 아니다.
+
+- **v1 호환 불필요 (CUE 확정)**: v1은 가능성 검토용으로 종료, **현재 미사용**. 따라서 v1 키 호환 부담 없음 → 더 깨끗한 "항상 prefix" 방식 채택 가능.
+- **키 prefix 계약 (D-L18-2 확정 — 항상 prefix·기본값 default)**:
+```
+context_key  {tenant_id}:{platform}:{space_type}:{space_id}:{topic_id}
+persona_key  {tenant_id}:{agent_id}        (플랫폼 prefix 금지 원칙 유지)
+session_id   {tenant_id} 접두
+```
+  - **항상 tenant_id prefix를 붙인다.** 단일 테넌트(현 단계)는 고정 기본값 `tenant_id = "default"`. 조건 분기(있으면 prefix/없으면 생략) 없음 → 키가 항상 같은 모양, 디버깅·로그 명확. tenant 도입 시 `default`만 실제 id로 치환, 코드 변경 0.
+  - 근거: v1 호환 불필요해져 "생략 후 추가" 방식의 이점 소멸. 분기 없는 일관성이 우월.
+- **tenant_id 출처 (D-L18-3 확정)**: **현 단계는 고정 기본값 `default` 주입**(설정/상수). 향후 토큰(#2)에서 도출(agent_id처럼 위조 불가) — 단 토큰↔tenant 바인딩은 **대고객 서비스 서브프로젝트** 책임. 코어는 구조만 정의.
+- **tenant_id 형식·정규화**: URL-safe(영숫자+하이픈), 길이 상한, 구분자 `:` 금지(context_key 충돌 방지), 예약어 금지(`system` 등). `default`는 단일 테넌트 기본 예약값.
+- **격리 의미 (D-L18-4 확정)**:
+  - tenant 간 **완전 격리** — 메시지·세션·quota·큐가 tenant 경계를 넘지 않음. tenant_id가 모든 격리 키의 최상위 prefix.
+  - **persona는 tenant별 격리**(`{tenant_id}:{agent_id}`). 상용에서 고객 A의 Zeus와 고객 B의 Zeus는 다른 인격·기억(데이터 격리=상용 필수). 단일 테넌트(default)에선 차이 없음.
+  - **"플랫폼 초월 공유"와 충돌 아님** — persona는 **플랫폼은 초월(공유)하되 tenant는 격리**. 축이 다르다(혼동 사전 박제): 플랫폼 격리 금지 ≠ tenant 격리 허용.
+- **L21 tenant 회수 (P54 해소)**: L21이 미뤘던 tenant rate limit·quota는 본 키 계약 위에서 `{tenant_id}:{agent_id}` override로 자연 적용. L21 tenant 적용분 정합 완료 — 별도 tenant 재작업 불요.
+- **현 동작 보장**: 코어는 tenant 없이 돌던 게 아니라 **항상 `default` prefix로 돈다**. 키 생성 함수는 tenant_id 주입 형태. 단일 테넌트 = `default` 고정.
+- **L22 연계**: tenant별 데이터 증가 시 수평 분할(샤딩) 후보 키가 tenant_id. L22가 전제로 받음.
+- **테스트 (TS 대역 공유, D-L18-5)**: TS.9 항상 prefix 적용(단일=default) / TS.10 tenant prefix 키 정규화 / TS.11 tenant 간 격리(메시지·세션·quota 경계) / TS.12 persona tenant 격리(`{tenant}:{agent}`)·플랫폼 초월 동시 성립 / TS.13 예약어·구분자(`:`) 충돌 거부 / TS.14 default 고정 시 현 동작 정상
+
 ---
 
 ## 2. 결정 대기 (P-prefix)
@@ -415,7 +436,7 @@ system:
 | P51 | L21 | rate limit fail 모드 | fail-open (인증 closed와 구분) |
 | P52 | L21 | quota 카운터 영속 | SQLite quota_usage 테이블 |
 | P53 | L21 | cc quota 계상 | 비계상 (rate limit만 적용) |
-| P54 | L21 | tenant 단위 제어 | 구조 예약, 수치·키 L18 이관 |
+| P54 | L21 | tenant 단위 제어 | **L18에서 회수·해소** — {tenant}:{agent} 키 override로 적용 |
 | P55 | L21 | 기본 한도값 | rate 60/리필1·quota 1d/10000 (override agent_id별) |
 | P56 | L20 | 지표 노출 형태 | /metrics(Prometheus) + /metrics.json 병행, 라우터 내장 대시보드 기각 |
 | P57 | L20 | 지표 바인딩 | 127.0.0.1 기본 비공개(admin 동일) |
@@ -429,6 +450,10 @@ system:
 | P65 | L17 | 동시 쓰기 | 단일 writer 큐 + busy_timeout 병행 |
 | P66 | L17 | 파일 분리 | queue.db 단일(운영) + audit.db + raw.db(옵션) |
 | P67 | L17 | DB 라이브러리 | better-sqlite3 (PRD 내장 우선 변경, CUE 승인). node:sqlite는 졸업 후 전환 가능 |
+| P68 | L18 | tenant 키 방식 | 항상 prefix, 단일 테넌트 기본값 default (v1 호환 불필요로 생략 방식 기각) |
+| P69 | L18 | L18 범위 | 키 계약만. 발급·인증·바인딩은 대고객 서브프로젝트 |
+| P70 | L18 | persona tenant | tenant별 격리({tenant}:{agent}). 플랫폼 초월과 다른 축 |
+| P71 | L18 | tenant_id 출처 | 현 단계 default 고정, 향후 토큰 도출(바인딩은 서브프로젝트) |
 
 ---
 
@@ -473,12 +498,17 @@ system:
 | 06-11 | L17 | #1·#6·#2·#8·L21 "동일 SQLite" 직접 참조 | 저장소 추상화 인터페이스 뒤로 일반화(갈래 C). 재작성 아니라 계층 삽입 |
 | 06-11 | L17 | 대고객 서비스 DB 공백(CUE 지적) | 계층 2(회원·결제·구독, PostgreSQL 별도 DB)는 서브프로젝트로 분리. 코어 검증 우선, 확장 메모만. L24 별도 항목 미생성(CUE 결정) |
 | 06-11 | 테스트 ID | 저장소 테스트 대역 | TS 대역 신설. 혼동 사전 반영 |
+| 06-11 | L18 | v1 키 호환 | CUE 확정: v1 미사용·호환 불필요 → 항상 prefix(default) 방식 채택, 생략 방식 기각 |
+| 06-11 | L18 | P54 tenant 제어 이관분 | L18 키 계약 위에서 {tenant}:{agent} override로 회수·해소 |
+| 06-11 | L18 | persona "플랫폼 초월 공유" vs tenant 격리 | 충돌 아님 — 플랫폼 초월(공유)·tenant 격리는 다른 축. 혼동 사전 박제 |
+| 06-11 | L18 | #6 세션 tenant(예약) 필드 | "항상 존재, 단일=default"로 구체화 |
+| 06-11 | L18 | 범위 과확장 위험 | 키 계약만 확정. 발급·인증·바인딩은 대고객 서브프로젝트로 분리 |
 
 ---
 
 ## 4. PRD 반영 대기 메모
 
-**교체/재작성**: 7.2(SSE), 6.3(세션), 6.5(가드), 8절(Admin), 9-D(audit), 9-A(SDK), 9절(DB 라이브러리 better-sqlite3로 변경)
+**교체/재작성**: 7.2(SSE), 6.3(세션), 6.5(가드), 8절(Admin), 9-D(audit), 9-A(SDK), 9절(DB 라이브러리 better-sqlite3로 변경), 9-B(tenant 키 항상 prefix·default 구체화)
 
 **삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL
 
@@ -486,20 +516,22 @@ system:
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17)
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17) / tenant 키 계약(L18)
 
-**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록
+**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록 / system.tenant(default 기본값·정규화 규칙)
 
 **4절 보강**: 4.2 태깅·합성 필터, 4.5 합성 규칙
+
+**9-B 구체화 (L18)**: tenant 키 = 항상 prefix(단일=default). context_key/persona_key/session_id 전부 `{tenant_id}:` 접두. persona는 tenant 격리·플랫폼 초월(다른 축). 발급·인증은 대고객 서브프로젝트. v1 호환 불필요 명시
 
 **관측 워커 신설**: 라우터와 분리된 비동기 워커. /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
 
 **저장소 인터페이스 신설**: 운영 DB 단일 추상화 계층(SQLite 1차/PostgreSQL 전환). better-sqlite3 채택(PRD 9절 변경). WAL·단일 writer 큐·busy_timeout·user_version 마이그레이션 규약. 9절 "node:sqlite 우선" 폐기
 
-**대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점. 대시보드 사업 지표 별도 소스. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
+**대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점(L18 tenant_id가 여기서 발급·바인딩). 대시보드 사업 지표 별도 소스. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB)
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축)
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성) / TS.1~8 신설(저장소)
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성) / TS.1~8 신설(저장소) / TS.9~14 신설(tenant 키)
