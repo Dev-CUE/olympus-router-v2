@@ -1,3 +1,8 @@
+> ⛔ **새 세션 필수 — 설계 착수 전 반드시 읽어라**
+> 1. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
+> 2. `Olympus_Design_Handoff_New_Session.md` (현재 위치)
+> 이 원장만 읽고 설계에 착수하지 마라 = 프로토콜 위반. SSOT 우선순위: PRD > 이 원장 > 핸드오프.
+
 # Olympus v6.13 설계 원장 (Design Ledger)
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
@@ -12,7 +17,7 @@
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
-5. **원장 쓰기 권한**: 새 세션 에이전트는 GitHub 읽기 전용. 원장 갱신은 이 창(MCP 쓰기 권한 보유)에서 수행. 새 세션이 확정 블록을 출력하면 CUE가 이 창에 전달 → 이 창이 원장에 반영.
+5. **프로세스 규칙 전문은 Session_Protocol.md로 분리**. 킵·핸드오프 갱신·혼동 사전·푸시 트리거 규칙은 거기 참조. 여기서 중복하지 않는다.
 
 ---
 
@@ -82,6 +87,7 @@ queued 상태에서도 result 수신 시 → completed (G1: 재전달 전 result
 - expired/dead_letter 진입 시 어댑터로 실패 통지 (좀비 세션 차단)
 
 **jobs 테이블 스키마 (보강)**: job_id, agent_id, context_key, status, egress_status, egress_id, platform_message_id, redeliver_count, created_at, updated_at
+> platform_message_id·기타 job 레코드는 `completed_retention_h`(기본 72h) 동안만 보존, job 청소 시 함께 소멸. 무한 누적 없음(G2 dedup 보호 창 ≪ retention).
 
 **영속성**: T10.6(휘발 허용) 폐기 → durable. 백엔드 node:sqlite 권고, JSONL WAL 폴백. 재시작 시 queued 복원, delivered→queued 회수.
 
@@ -122,7 +128,6 @@ system:
 - **순서**: 동일 context_key FIFO 직렬, 타 context 병렬
 - **실패 통지**: dead_letter/expired → JOB_EXPIRED / JOB_DEAD_LETTER (신규 2종)
 - **인증**: 어댑터별 shared secret(env) 헤더, fail-closed
-- **원칙**: Zero Inbound는 에이전트 대상. 어댑터는 inbound 허용
 - **시스템 로그**: job 상태 전이(G1~G4) 추적 — audit와 독립 레이어. 로그 형태·retention·쿼리는 L20 소관
 - **테스트**: T10.23~29
 
@@ -150,7 +155,7 @@ system:
 | G | 내용 | 처리 |
 |---|------|------|
 | G1 | queued 회수 후 result 도착 경쟁 | queued 상태에서도 result→completed 허용. 시스템 로그로 추적 |
-| G2 | egress 재시도 ~21s < 어댑터 재기동 + platform_message_id 재발사 | [1,4,16,60,120]s + platform_message_id jobs 기록으로 라우터가 재발사 차단 |
+| G2 | egress 재시도 ~21s < 어댑터 재기동 + platform_message_id 재발사 | [1,4,16,60,120]s + platform_message_id jobs 기록으로 라우터가 재발사 차단. **이 기록은 job retention(completed_retention_h 72h) 종속 — job 청소 시 동반 소멸, 무한 누적 없음.** 재시도 창(분) ≪ retention(72h)이라 보호 충분. retention 만료 후 지각 재시도는 UNKNOWN_JOB로 이중 차단 |
 | G3 | 복구 트랜잭션의 pending egress 회수 명시 | 부팅 복구 트랜잭션에 egress pending → 재시도 큐 복원 명시 |
 | G4 | 게시→dedup 커밋→ACK 순서 + at-least-once 잔여 중복 한계 | 어댑터 dedup 영속화(P21). 잔여 중복은 at-least-once 속성으로 명문화 |
 | G5 | 라우터 다운 시 어댑터 ingress 재시도 | P22: 백오프 최대 5분 |
@@ -230,6 +235,7 @@ system:
 ```
 
 **어댑터**: env fail-fast → dedup 영속 오픈(P21) → 플랫폼 재연결 → ingress·egress 재개
+- **/ready 게이팅**: 어댑터도 /ready 노출. ready 전 도착한 egress는 503 → 라우터 #3 재시도 스케줄로 흡수. 어댑터는 무상태이므로 재동기화 핸드셰이크 불요(명문화).
 
 **에이전트**: SSE 접속
 - Last-Event-ID 제출 = 연결 단절(유실분만 재push)
@@ -239,7 +245,7 @@ system:
 
 **시스템 로그**: G1~G4 전이 추적. audit와 독립 레이어. 로그 형태·retention·쿼리는 L20 소관.
 
-**at-least-once 명문화**: 게시→dedup 커밋→ACK 사이 어댑터 사망 시 잔여 중복 게시 가능 — at-least-once 속성으로 명문화. 어댑터 dedup 영속화(P21)로 최소화하되 완전 제거는 보장하지 않음.
+**at-least-once 명문화**: 게시→dedup 커밋→ACK 사이 어댑터 사망 시 잔여 중복 게시 가능 — at-least-once 속성으로 명문화. 어댑터 dedup 영속화(P21)로 최소화하되 완전 제거는 보장하지 않음(exactly-once 불가).
 
 **테스트**: T10.36~38, TA.6, T10.39(복구 트랜잭션 egress pending 재개 확인)
 
@@ -309,6 +315,7 @@ system:
 | P45 | #8 | 부트스트랩 | 로컬 CLI |
 | P46 | #8 | 세션 조회 | 메타만 |
 | P47 | #8 | yaml 쓰기 | API 우선+/admin/reload |
+| P48 | 재시작 | 어댑터 /ready 게이팅 | 채택 (ready 전 egress 503→#3 재시도) |
 
 ---
 
@@ -334,6 +341,9 @@ system:
 | 06-11 | #8 | PRD 8절·리뷰B 4.3 | 재작성·해소 |
 | 06-11 | 번호체계 | L/P 혼용 혼동 | 번호 체계 정의 섹션 추가, L-prefix 명시 |
 | 06-11 | 재시작 보강 | #9 audit-시스템로그 혼용, G2~G4 미완, jobs 스키마 | 새 세션 검토 반영 — audit/시스템로그 분리 명문화, G2~G4 재정의, jobs 스키마 보강, at-least-once 명문화, 복구 트랜잭션 egress pending 추가 |
+| 06-11 | 무단 푸시 | 재시작 보강이 CUE 승인 전 무단 푸시됨(이전 창) | 위반 기록. 내용은 합의안과 일치 → 롤백 없이 사후 추인(CUE 승인). 재발 방지로 Session_Protocol에 푸시 트리거 규칙 신설 |
+| 06-11 | G2 보강 | retention 종속 누락 | platform_message_id가 job retention 72h 종속(무한 누적 방지) 명문화. P48(어댑터 /ready) 신설 |
+| 06-11 | 문서구조 | 킵·핸드오프 규칙 PRD/원장 산재 | Session_Protocol.md 분리, 게이트 포인터 박제 |
 
 ---
 
@@ -343,7 +353,7 @@ system:
 
 **삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL
 
-**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready, POST /admin/reload
+**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명)
 
@@ -356,5 +366,7 @@ system:
 **9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율
 
 **용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준
+
+**문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
 **테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설
