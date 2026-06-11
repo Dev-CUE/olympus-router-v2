@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21 확정 / 잔여: L20·L17·L18·L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20 확정 / 잔여: L17·L18·L22·L23·LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→**L20** / [구조] **L17→L18→L19(완료)→L22→L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] **L17→L18→L19(완료)→L22→L23** / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 |
 | **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
 | **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
@@ -291,6 +290,52 @@ system:
 - **신규 에러코드**: `RATE_LIMITED`(429+Retry-After), `QUOTA_EXCEEDED`(429+리셋시각)
 - **테스트 (TR 대역 신설)**: TR.1 버킷 소진 후 429 / TR.2 Retry-After 정확성 / TR.3 quota 윈도우 리셋 / TR.4 재시작 후 quota 카운터 유지(영속) / TR.5 fail-open 동작 / TR.6 override 적용 / TR.7 A2A 429가 세션 미파괴 / TR.8 cc는 rate limit 적용·quota 비계상
 
+### [#L20] SLO·관측성 — 지표·알람·SLO (확정)
+
+> 라우터의 건강 상태를 숫자로 노출하고(지표), 위험선 초과 시 알린다(알람). 외부 인프라 직접 호출 금지(원칙 6) 유지 — 라우터는 노출·기록까지만, 알람 판정·발신은 별도 워커.
+
+- **지표(metrics) 노출 (D-L20-1 확정)**: 라우터는 **수치만 노출, 대시보드 화면은 안 그림**(Dumb Pipe 정신). **향후 외부 대시보드(Grafana 등)를 연결할 수 있도록 조회 API 제공.** 두 형태 병행:
+  - `/metrics` — Prometheus 텍스트 익스포지션(표준 모니터링 도구 연결용)
+  - `/metrics.json` — JSON(자체 화면·스크립트·간단 조회용)
+  - 같은 수치를 형식만 다르게 내놓음. 라우터 내장 대시보드(차트 렌더링)는 채택 안 함 — UI 로직은 원칙 충돌.
+- **노출 바인딩 (D-L20-2 확정)**: **#8 admin과 동일 정책 — 127.0.0.1 기본 비공개.** 외부 노출은 expose:true + CF Access 전제. 트래픽 패턴 유출 방지.
+- **핵심 지표 (4 골든 시그널)**:
+  - Latency: ingress→egress 내부 처리 시간, A2A 라운드 지연, SSE push 지연(히스토그램)
+  - Traffic: ingress/egress/result/a2a 요청률, SSE 활성 연결 수
+  - Errors: 에러코드별 카운트(RATE_LIMITED·QUOTA_EXCEEDED·A2A_*·JOB_*·AUDIT_UNAVAILABLE), egress 재시도율·dead_letter율
+  - Saturation: 큐 깊이(queued 수), lease 활성 수, quota 소진 임박 키 수
+  - 도메인 지표: 세션 활성 수, audit 큐(closed 백프레셔), Obsidian SLA 위반 카운트
+- **SLO 수치 (D-L20-3 확정 — 자리표시자, 실측 후 재조정)**: 실연동 데이터 없는 현 시점엔 **목표 후보로만 선언**, 실측(T10.x) 후 v6.13+ 재조정. 근거 없는 단정 회피.
+  - 라우팅 가용성: 99.5%(초기 보수값, 단일 라우터 수직 확장 전제)
+  - ingress→egress p95 내부 지연: < 2s(플랫폼 게시 제외)
+  - Obsidian SLA: 마커 60s / 배치 15분(#16 확정 — L20은 위반 측정·알람만)
+- **알람 (D-L20-4 확정 — UI 설정으로 변경)**: 알람 규칙(어떤 지표가 어떤 임계 초과 시 알림)을 **#8 Admin UI에서 설정 → yaml 저장 → 관측 워커가 yaml 읽어 판정·Telegram 발신.** 운영자가 코드 수정 없이 임계·on/off 조정. **라우터는 Telegram 직접 호출 안 함(원칙 6 유지)** — 발신은 별도 관측 워커(audit·wiki 워커와 동일 비동기 분리 패턴).
+  - 알람 트리거 후보: dead_letter 발생(#3/P13 회수) / audit closed 차단 발생 / 큐 깊이 임계 초과 / quota 소진율 급증 / Obsidian SLA 위반(#16 회수) / SSE 연결 0 지속(에이전트 전체 단절)
+  - 채널: 기존 Telegram 에스컬레이션(escalator) 재사용. PagerDuty 등 외부는 비범위.
+- **시스템 로그 형식 (확정 — 일단위 파일 롤링)**: job 상태 전이(#3/재시작 G1~G4 이관)는 **구조화 JSON 1줄/이벤트**(job_id, agent_id, from_state, to_state, reason, ts). **파일은 일단위 생성·롤링, 파일명 `system-YYYYMMDD.log` 형식**(예: `system-20260101.log`). 자정 롤오버.
+  - retention(보존 기간) 수치는 **L23 이관**(D-L20-5). L20은 로그 스키마·파일 규칙·조회 인터페이스까지만.
+- **레이어 구분**: 관측 지표(L20) ≠ audit 로그(#9). audit는 컴플라이언스(메시지 내용), L20은 운영 관측(상태·수치). 별 레이어 — 혼동 사전 박제.
+- **설정안**:
+```yaml
+system:
+  observability:
+    metrics:
+      enabled: true
+      bind: "127.0.0.1"          # 기본 비공개. 외부는 expose+CF Access
+      expose: false
+      formats: ["prometheus", "json"]   # /metrics, /metrics.json
+    system_log:
+      dir: "data/logs/"
+      file_pattern: "system-{YYYYMMDD}.log"   # 일단위 롤링
+      rollover: "daily"
+      # retention: L23 소관
+    alerts:
+      enabled: true              # 규칙은 Admin UI에서 관리(yaml 기록)
+      channel: "telegram"
+      rules: []                  # Admin UI가 채움 (metric·threshold·on/off)
+```
+- **테스트 (TO 대역 신설, D-L20-6)**: TO.1 /metrics Prometheus 포맷 유효성 / TO.2 /metrics.json 유효성 / TO.3 골든 시그널 카운터 증가 / TO.4 dead_letter 시 알람 트리거 / TO.5 Obsidian SLA 위반 카운트 / TO.6 /metrics 비공개 바인딩(외부 차단) / TO.7 관측 워커가 라우터 직접 호출 안 함(원칙 6 격리) / TO.8 시스템 로그 일단위 파일 롤링(파일명 규칙)
+
 ---
 
 ## 2. 결정 대기 (P-prefix)
@@ -311,7 +356,7 @@ system:
 | P10 | #3 | ACK | 동기 |
 | P11 | G2 | egress 재시도 수치 | [1,4,16,60,120]s |
 | P12 | #3 | context 직렬화 | 채택 |
-| P13 | #3 | egress 영구 실패 알림 | L20 이관 |
+| P13 | #3 | egress 영구 실패 알림 | L20 알람으로 확정(관측 워커 발신) |
 | P14 | #5 | _source_url·url·source_url 삭제 | 삭제 |
 | P15 | #5 | A2A 전용 엔드포인트 | 채택 |
 | P16 | #5 | caller 불일치 | 거부 |
@@ -354,6 +399,13 @@ system:
 | P53 | L21 | cc quota 계상 | 비계상 (rate limit만 적용) |
 | P54 | L21 | tenant 단위 제어 | 구조 예약, 수치·키 L18 이관 |
 | P55 | L21 | 기본 한도값 | rate 60/리필1·quota 1d/10000 (override agent_id별) |
+| P56 | L20 | 지표 노출 형태 | /metrics(Prometheus) + /metrics.json 병행, 라우터 내장 대시보드 기각 |
+| P57 | L20 | 지표 바인딩 | 127.0.0.1 기본 비공개(admin 동일) |
+| P58 | L20 | SLO 수치 | 자리표시자(가용성 99.5%/p95<2s), 실측 후 재조정 |
+| P59 | L20 | 알람 관리 | Admin UI 설정→yaml→관측 워커 판정·Telegram 발신 |
+| P60 | L20 | 알람 발신 주체 | 별도 관측 워커(라우터 직접 호출 금지, 원칙 6) |
+| P61 | L20 | 시스템 로그 파일 규칙 | 일단위 롤링 system-YYYYMMDD.log |
+| P62 | L20 | 시스템 로그 retention | L23 이관 |
 
 ---
 
@@ -387,6 +439,13 @@ system:
 | 06-11 | L21 | quota 비용 기반 vs Dumb Pipe | 비용 계량 기각, 건수 기반 확정 |
 | 06-11 | L21 | tenant 제어 vs L18 미확정 | tenant 수치·키 L18 이관, L21은 agent_id만 확정 |
 | 06-11 | 테스트 ID | T10.x 연장 vs 신규 대역 | rate limit·quota는 독립 관심사 → TR 대역 신설. Session_Protocol 혼동 사전에 테스트 ID 체계 박제 |
+| 06-11 | L20 | #3/P13 egress 영구 실패 알림 | L20 알람 트리거로 회수·확정(관측 워커 발신) |
+| 06-11 | L20 | #16 Obsidian SLA 위반 알람 | L20 알람 트리거로 회수(임계·채널 확정) |
+| 06-11 | L20 | 알람 라우터 직접 발신 vs 원칙 6 | 관측 워커 분리로 회피. 라우터는 지표 노출·로그 기록까지만 |
+| 06-11 | L20 | 알람 코드 규칙 vs UI 설정 | CUE 지시로 Admin UI 설정→yaml→워커 판정 방식으로 변경 |
+| 06-11 | L20 | 라우터 내장 대시보드 vs Dumb Pipe | 내장 대시보드 기각, /metrics·/metrics.json API 노출만(외부 도구 연결) |
+| 06-11 | L20 | 시스템 로그 형식 | 일단위 롤링 system-YYYYMMDD.log 확정(CUE 지시). retention은 L23 이관 |
+| 06-11 | 테스트 ID | 관측 테스트 대역 | TO 대역 신설(TR과 동일 관심사 분리 논리). 혼동 사전 반영 |
 
 ---
 
@@ -396,20 +455,22 @@ system:
 
 **삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL
 
-**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload
+**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload, GET /metrics, GET /metrics.json
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21)
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20)
 
-**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit 블록
+**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록
 
 **4절 보강**: 4.2 태깅·합성 필터, 4.5 합성 규칙
 
 **9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율, rate limit 429 백오프
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증)
+**관측 워커 신설**: 라우터와 분리된 비동기 워커. /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
+
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota)
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성)
