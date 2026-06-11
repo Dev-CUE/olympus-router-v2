@@ -1,3 +1,8 @@
+> ⛔ **새 세션 필수 — 설계 착수 전 반드시 읽어라**
+> 1. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
+> 2. `Olympus_Design_Handoff_New_Session.md` (현재 위치 + 확정 요약)
+> 이 PRD만 읽고 설계에 착수하지 마라 = 프로토콜 위반. 진행 중 설계의 최신 상태는 원장(Ledger)에 있고, PRD 일괄 반영(v6.13)은 전 항목 완료 후 1회 수행한다.
+
 # Olympus Router — PRD & Implementation Plan
 
 > **버전**: v6.12 (메모리 라이프사이클 확정 — DM=Mem0 사적 / 조직=Obsidian, 회의→Obsidian 반영 트리거, 보안감사 옵션 모듈 계약)
@@ -733,6 +738,8 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.10 | 상용화 골격 — 에이전트 SDK 계약(9-A, 규격만) / 멀티테넌시 키 확장 최소반영(9-B, tenant_id 자리만 예약·본격설계 아님) / 온보딩 흐름(9-C) / Phase 11(T11.1~T11.7) 추가. 원칙표에 Agent SDK Contract·Tenant-Ready Keys 추가. 에러코드에 UNKNOWN_JOB·UNAUTHORIZED_POLL 정합 / Admin에 토큰 재발급 엔드포인트 추가 |
 | v6.11 | Google A2A 표준 호환성 결정 사항 반영 — Olympus A2A(독자 규격)와 Google A2A(Linux Foundation 표준) 관계 명시. 외부 연동 시 호환 레이어 검토 보류. SDK 9-A에 Agent Card 확장 여지 명시. 14절 미결에 Google A2A 항목 추가. 토폴로지에 외부 연동 레이어 표시. 용어집에 Google A2A 항목 추가 |
 | v6.12 | **메모리 라이프사이클 확정** — DM=Mem0(사적 보좌, 적립 1:1 한정) / DM 외=Obsidian(조직 지식). 인격 자체는 공간 무관 Mem0 유지. 회의→Obsidian 반영 트리거 확정(폴링+resolved/out 마커, eventual). 4-A 절 신설. 6.4 기록 규칙을 공간별 분기로 변경(그룹/A2A 결론→Obsidian, T5.14 갱신 대상). Raw 드롭 DM 스킵. **보안감사 옵션 모듈(9-D) 계약 추가** — audit-sink(불변·무손실, Raw Sink와 구현 분리) / 정책 yaml(default-on opt-out, 1=감사·0=면제) / 관리자 전용 권한·메타감사 / Phase 12 신설. Gemini 트리거 미결 해소 |
+
+> **v6.13 (진행 중, 별도 작업)**: 원장(Olympus_Design_Ledger.md)에 누적된 설계 항목(SSE 전환, Job Queue 영속, 토큰 인증, A2A 신원·세션, audit-sink, 재시작·복구 프로토콜, Admin 등)을 전 항목 완료 후 1회 일괄 반영 예정. 그 전까지 진행 중 설계의 최신 상태는 원장이 SSOT 브릿지.
 
 ---
 
