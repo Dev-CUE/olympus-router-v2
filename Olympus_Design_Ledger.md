@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18 확정 / 잔여: L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18·L22 확정 / 잔여: L23·LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→L18(완료)→L19(완료)→**L22→L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→L18(완료)→L19(완료)→L22(완료)→**L23** / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
 | **LB** | B군 모순 해소 — 아래 4건 일괄 | 최후 |
 
@@ -167,7 +166,7 @@ system:
 | Slack | 수 분 내 3회 재시도 후 드롭 |
 | Discord | resume 윈도우 내 재전달, 초과 시 유실 |
 
-**L22 선결정**: 단일 라우터 + 수직 확장 우선. 수평 전환 전제조건은 L22에서 계약으로만 명시.
+**L22 선결정**: 단일 라우터 + 수직 확장 우선. 수평 전환 전제조건은 L22에서 계약으로 확정(완료).
 
 ### [#7] cc — SSE 전달·차단·수명 정의 (확정)
 
@@ -268,7 +267,7 @@ system:
   - **quota**: 시간·일 누적 총량. 초과 시 `QUOTA_EXCEEDED` 429 + 리셋 시각.
 - **quota 계량 단위**: **건수 기반.** 비용 기반은 Dumb Pipe 위반이라 기각.
 - **cc(listen) 계상**: **rate limit은 cc 포함 적용**, **quota 건수는 to만 카운트**.
-- **영속성**: rate limit 버킷=인메모리(재시작 가득 복원). quota 카운터=영속(SQLite `quota_usage`: key, window_start, count). key는 L18 정규화 키.
+- **영속성**: rate limit 버킷=인메모리(재시작 가득 복원). quota 카운터=영속(SQLite `quota_usage`: key, window_start, count). key는 L18 정규화 키. **(L22 정합) 인메모리 버킷은 수평 확장 시 라우터별 분산 → 공유 버킷 필요(L22 전제조건).**
 - **fail 모드**: **fail-open.** 인증(#2)=보안=fail-closed / 유량(L21)=가용성=fail-open 명문 구분.
 - **A2A 경로**: rate limit 시 해당 호출만 429, 세션 미파괴. speaker_counts(#6, 회의 독주 방지)와 별 레이어.
 - **설정안**:
@@ -287,7 +286,7 @@ system:
 - **신규 에러코드**: `RATE_LIMITED`, `QUOTA_EXCEEDED`
 - **테스트 (TR 대역)**: TR.1~8 (버킷 소진 429 / Retry-After / quota 리셋 / 재시작 영속 / fail-open / override / A2A 세션 미파괴 / cc 비계상). TR.6 override는 L18 tenant 키 정합 포함.
 
-### [#L20] SLO·관측성 — 지표·알람·SLO (확정)
+### [#L20] SLO·관측성 — 지표·알람·SLO (확정 — L22 어댑터 지표 보강)
 
 > 라우터의 건강 상태를 숫자로 노출하고(지표), 위험선 초과 시 알린다(알람). 외부 인프라 직접 호출 금지(원칙 6) 유지 — 라우터는 노출·기록까지만, 알람 판정·발신은 별도 워커.
 
@@ -295,19 +294,21 @@ system:
   - `/metrics` — Prometheus 텍스트 익스포지션(표준 모니터링 도구 연결용)
   - `/metrics.json` — JSON(자체 화면·스크립트·간단 조회용)
   - 같은 수치를 형식만 다르게 내놓음. 라우터 내장 대시보드(차트 렌더링)는 채택 안 함 — UI 로직은 원칙 충돌.
+  - **(L22 보강) 어댑터도 동일 `/metrics`·`/metrics.json` 노출**(L20 형식 재사용). 라우터만 보면 어댑터 병목을 놓침. 어댑터 지표는 무상태 원칙상 인메모리 카운터+노출만. 관측 워커가 라우터·어댑터 지표를 함께 수집.
 - **노출 바인딩 (D-L20-2 확정)**: **#8 admin과 동일 정책 — 127.0.0.1 기본 비공개.** 외부 노출은 expose:true + CF Access 전제. 트래픽 패턴 유출 방지.
 - **핵심 지표 (4 골든 시그널)**:
   - Latency: ingress→egress 내부 처리 시간, A2A 라운드 지연, SSE push 지연(히스토그램)
   - Traffic: ingress/egress/result/a2a 요청률, SSE 활성 연결 수
   - Errors: 에러코드별 카운트(RATE_LIMITED·QUOTA_EXCEEDED·A2A_*·JOB_*·AUDIT_UNAVAILABLE), egress 재시도율·dead_letter율
-  - Saturation: 큐 깊이(queued 수), lease 활성 수, quota 소진 임박 키 수
+  - Saturation: 큐 깊이(queued 수), lease 활성 수, quota 소진 임박 키 수, 단일 writer 큐 대기 시간(L17)
   - 도메인 지표: 세션 활성 수, audit 큐(closed 백프레셔), Obsidian SLA 위반 카운트
+  - **(L22 보강) 어댑터 지표**: 플랫폼 API 호출 지연·실패율, 어댑터 인입 처리량, egress 적체
 - **SLO 수치 (D-L20-3 확정 — 자리표시자, 실측 후 재조정)**: 실연동 데이터 없는 현 시점엔 **목표 후보로만 선언**, 실측(T10.x) 후 v6.13+ 재조정. 근거 없는 단정 회피.
-  - 라우팅 가용성: 99.5%(초기 보수값, 단일 라우터 수직 확장 전제)
+  - 라우팅 가용성: 99.5%(초기 보수값, 단일 라우터 수직 확장 전제 — 단일 라우터는 SPOF, L22 수용 위험)
   - ingress→egress p95 내부 지연: < 2s(플랫폼 게시 제외)
   - Obsidian SLA: 마커 60s / 배치 15분(#16 확정 — L20은 위반 측정·알람만)
 - **알람 (D-L20-4 확정 — UI 설정으로 변경)**: 알람 규칙(어떤 지표가 어떤 임계 초과 시 알림)을 **#8 Admin UI에서 설정 → yaml 저장 → 관측 워커가 yaml 읽어 판정·Telegram 발신.** 운영자가 코드 수정 없이 임계·on/off 조정. **라우터는 Telegram 직접 호출 안 함(원칙 6 유지)** — 발신은 별도 관측 워커(audit·wiki 워커와 동일 비동기 분리 패턴).
-  - 알람 트리거 후보: dead_letter 발생(#3/P13 회수) / audit closed 차단 발생 / 큐 깊이 임계 초과 / quota 소진율 급증 / Obsidian SLA 위반(#16 회수) / SSE 연결 0 지속(에이전트 전체 단절)
+  - 알람 트리거 후보: dead_letter 발생(#3/P13 회수) / audit closed 차단 발생 / 큐 깊이 임계 초과 / quota 소진율 급증 / Obsidian SLA 위반(#16 회수) / SSE 연결 0 지속(에이전트 전체 단절) / **(L22) 스케일업 검토 신호(지속 포화)**
   - 채널: 기존 Telegram 에스컬레이션(escalator) 재사용. PagerDuty 등 외부는 비범위.
 - **시스템 로그 형식 (확정 — 일단위 파일 롤링)**: job 상태 전이(#3/재시작 G1~G4 이관)는 **구조화 JSON 1줄/이벤트**(job_id, agent_id, from_state, to_state, reason, ts). **파일은 일단위 생성·롤링, 파일명 `system-YYYYMMDD.log` 형식**(예: `system-20260101.log`). 자정 롤오버.
   - retention(보존 기간) 수치는 **L23 이관**(D-L20-5). L20은 로그 스키마·파일 규칙·조회 인터페이스까지만.
@@ -320,7 +321,7 @@ system:
       enabled: true
       bind: "127.0.0.1"          # 기본 비공개. 외부는 expose+CF Access
       expose: false
-      formats: ["prometheus", "json"]   # /metrics, /metrics.json
+      formats: ["prometheus", "json"]   # /metrics, /metrics.json (라우터·어댑터 공통)
     system_log:
       dir: "data/logs/"
       file_pattern: "system-{YYYYMMDD}.log"   # 일단위 롤링
@@ -331,7 +332,7 @@ system:
       channel: "telegram"
       rules: []                  # Admin UI가 채움 (metric·threshold·on/off)
 ```
-- **테스트 (TO 대역 신설, D-L20-6)**: TO.1 /metrics Prometheus 포맷 유효성 / TO.2 /metrics.json 유효성 / TO.3 골든 시그널 카운터 증가 / TO.4 dead_letter 시 알람 트리거 / TO.5 Obsidian SLA 위반 카운트 / TO.6 /metrics 비공개 바인딩(외부 차단) / TO.7 관측 워커가 라우터 직접 호출 안 함(원칙 6 격리) / TO.8 시스템 로그 일단위 파일 롤링(파일명 규칙)
+- **테스트 (TO 대역 신설, D-L20-6)**: TO.1 /metrics Prometheus 포맷 유효성 / TO.2 /metrics.json 유효성 / TO.3 골든 시그널 카운터 증가 / TO.4 dead_letter 시 알람 트리거 / TO.5 Obsidian SLA 위반 카운트 / TO.6 /metrics 비공개 바인딩(외부 차단) / TO.7 관측 워커가 라우터 직접 호출 안 함(원칙 6 격리) / TO.8 시스템 로그 일단위 파일 롤링(파일명 규칙) / TO.9 어댑터 /metrics 노출(L22)
 
 ### [#L17] 운영 저장소 계층 규약 — SQLite 구현 + 추상화 (확정)
 
@@ -372,8 +373,28 @@ session_id   {tenant_id} 접두
   - **"플랫폼 초월 공유"와 충돌 아님** — persona는 **플랫폼은 초월(공유)하되 tenant는 격리**. 축이 다르다(혼동 사전 박제): 플랫폼 격리 금지 ≠ tenant 격리 허용.
 - **L21 tenant 회수 (P54 해소)**: L21이 미뤘던 tenant rate limit·quota는 본 키 계약 위에서 `{tenant_id}:{agent_id}` override로 자연 적용. L21 tenant 적용분 정합 완료 — 별도 tenant 재작업 불요.
 - **현 동작 보장**: 코어는 tenant 없이 돌던 게 아니라 **항상 `default` prefix로 돈다**. 키 생성 함수는 tenant_id 주입 형태. 단일 테넌트 = `default` 고정.
-- **L22 연계**: tenant별 데이터 증가 시 수평 분할(샤딩) 후보 키가 tenant_id. L22가 전제로 받음.
+- **L22 연계**: tenant별 데이터 증가 시 수평 분할(샤딩) 후보 키가 tenant_id. L22가 1순위 샤딩 축으로 받음.
 - **테스트 (TS 대역 공유, D-L18-5)**: TS.9 항상 prefix 적용(단일=default) / TS.10 tenant prefix 키 정규화 / TS.11 tenant 간 격리(메시지·세션·quota 경계) / TS.12 persona tenant 격리(`{tenant}:{agent}`)·플랫폼 초월 동시 성립 / TS.13 예약어·구분자(`:`) 충돌 거부 / TS.14 default 고정 시 현 동작 정상
+
+### [#L22] 수평 확장 경로 — 전환 전제조건 계약 (확정)
+
+> **수평 확장을 구현하지 않는다.** 단일 라우터+수직 확장이 현 정답(코어 검증 우선). L22는 천장에 닿았을 때 다중 라우터로 넘어가기 위한 **전제조건 체크리스트 + 전환 신호**만 계약으로 명시. 멀티테넌시(9-B)·tenant 키(L18)와 동일 "자리만" 패턴.
+
+- **현 전제 재확인**: 단일 라우터 + 수직 확장(CPU·RAM 증설) 우선. 단일 라우터는 **SPOF**(단일 장애점) — 현 단계 수용 위험(가용성 SLO 99.5%가 이 전제, L20 정합).
+- **스케일업 판단 지표 (CUE 지적 반영 — 전환 신호)**: 수직 증설로 못 버티는 순간을 **관측으로 가늠**. L20 지표 재사용(신규 모니터링 안 만듦):
+  - 라우터: SSE 동시 연결 수, 큐 깊이 지속 상승, ingress→egress p95 지연 상승, **단일 writer 큐 대기 시간(SQLite 쓰기 병목, L17)**, CPU·RAM 포화
+  - **어댑터(CUE 지적): 플랫폼 API 호출 지연·실패율, 어댑터 인입 처리량, egress 적체** — 어댑터가 먼저 막힐 수 있으므로 어댑터도 `/metrics` 노출(L20 보강). 관측 워커가 라우터·어댑터 함께 수집.
+  - 이 지표들이 **지속적으로** 임계 근접 = 수평 전환 검토 신호. L20 알람에 "스케일업 검토" 임계 추가 가능(Admin UI 설정).
+- **수평 전환 시 깨지는 가정 = 전제조건 체크리스트 (D-L22-1 확정 — 체크리스트+권고 해법, 구현 비범위)**:
+  1. **상태 공유** — 큐·세션·quota가 라우터 로컬 SQLite. 다중 라우터면 각자 DB로 갈림. → 공유 저장소(PostgreSQL)로 전환(L17 저장소 인터페이스가 길 열어둠).
+  2. **SSE 연결 고정** — 에이전트가 라우터 A에 연결, job은 B에 쌓이면 미전달. → 연결-라우터 어피니티 또는 공유 큐 pull.
+  3. **단일 writer 직렬화** — L17 단일 writer 큐는 단일 프로세스 전제. 다중이면 DB 레벨 동시성(PostgreSQL MVCC·행 락)으로 대체.
+  4. **세션 SSOT** — #6 라우터 session_id SSOT. 다중이면 공유 세션 저장소 필수.
+  5. **idempotency·dedup** — 라우터별 로컬이면 중복 통과. → 공유 dedup 저장소.
+  6. **(D-L22-3) L21 rate limit 인메모리 버킷** — 다중 라우터에서 한도가 라우터별 분산(고객이 라우터 수만큼 초과 가능). → 수평 전환 시 공유 버킷(저장소/캐시) 필요.
+- **샤딩 축 (D-L22-2 확정)**: **tenant_id를 1순위 수평 분할(샤딩) 축**으로 명시. L18 키 구조(모든 키 최상위 prefix=tenant_id)가 이를 지원. 단일 테넌트(default) 단계엔 무의미, 다중 테넌트 시점 전제.
+- **전환 막지 않기 위한 현 단계 계약**: 상태는 저장소 인터페이스 경유(L17 — 로컬 메모리 가정 코드 금지). session_id·idempotency 검사는 저장소 통해(인메모리 전용 금지). L21 인메모리 버킷은 "수평 전환 시 공유화 필요" 항목으로 명시.
+- **테스트 (TS/TO 대역 공유)**: TS.15 상태가 저장소 인터페이스 경유(로컬 메모리 하드코딩 0) / TS.16 session·idempotency 저장소 경유 / TO.9 어댑터 /metrics 노출(스케일업 판단 지표) / 다중 라우터 실런타임 테스트는 전환 구현 시점(현 비범위).
 
 ---
 
@@ -454,6 +475,11 @@ session_id   {tenant_id} 접두
 | P69 | L18 | L18 범위 | 키 계약만. 발급·인증·바인딩은 대고객 서브프로젝트 |
 | P70 | L18 | persona tenant | tenant별 격리({tenant}:{agent}). 플랫폼 초월과 다른 축 |
 | P71 | L18 | tenant_id 출처 | 현 단계 default 고정, 향후 토큰 도출(바인딩은 서브프로젝트) |
+| P72 | L22 | 수평 확장 범위 | 전제조건 체크리스트+전환 신호만. 구현 비범위 |
+| P73 | L22 | 샤딩 축 | tenant_id 1순위 (L18 키 구조 지원) |
+| P74 | L22 | 스케일업 판단 지표 | L20 지표 재사용(라우터+어댑터), 지속 포화 시 전환 신호 |
+| P75 | L22 | 어댑터 지표 노출 | 어댑터도 /metrics 자체 노출(L20 형식), 관측 워커 수집 |
+| P76 | L22 | 전환 전제조건 | 상태공유·SSE고정·writer직렬화·세션SSOT·dedup·L21버킷 공유화 (전환 시 해소) |
 
 ---
 
@@ -503,6 +529,10 @@ session_id   {tenant_id} 접두
 | 06-11 | L18 | persona "플랫폼 초월 공유" vs tenant 격리 | 충돌 아님 — 플랫폼 초월(공유)·tenant 격리는 다른 축. 혼동 사전 박제 |
 | 06-11 | L18 | #6 세션 tenant(예약) 필드 | "항상 존재, 단일=default"로 구체화 |
 | 06-11 | L18 | 범위 과확장 위험 | 키 계약만 확정. 발급·인증·바인딩은 대고객 서브프로젝트로 분리 |
+| 06-11 | L22 | 단일 라우터 SPOF vs 가용성 | 현 단계 수용 위험으로 명문화(SLO 99.5% 전제). 수평 전환은 전제조건 충족 시 |
+| 06-11 | L22 | L21 인메모리 버킷 vs 다중 라우터 | 전환 시 공유 버킷 필요 — L22 전제조건(P76)으로 명시. 현 단일은 무해 |
+| 06-11 | L22 | 어댑터 지표 부재(CUE 지적) | 어댑터도 /metrics 노출(L20 보강). 스케일업 판단에 라우터+어댑터 함께 |
+| 06-11 | L22 | 스케일업 판단 부재(CUE 지적) | L20 지표 재사용해 전환 신호 명시(지속 포화). 신규 모니터링 미신설 |
 
 ---
 
@@ -512,11 +542,11 @@ session_id   {tenant_id} 접두
 
 **삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL
 
-**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload, GET /metrics, GET /metrics.json
+**신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload, GET /metrics, GET /metrics.json (라우터·어댑터 공통)
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17) / tenant 키 계약(L18)
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17) / tenant 키 계약(L18) / 수평 확장 경로 계약(L22)
 
 **agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록 / system.tenant(default 기본값·정규화 규칙)
 
@@ -524,14 +554,16 @@ session_id   {tenant_id} 접두
 
 **9-B 구체화 (L18)**: tenant 키 = 항상 prefix(단일=default). context_key/persona_key/session_id 전부 `{tenant_id}:` 접두. persona는 tenant 격리·플랫폼 초월(다른 축). 발급·인증은 대고객 서브프로젝트. v1 호환 불필요 명시
 
-**관측 워커 신설**: 라우터와 분리된 비동기 워커. /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
+**수평 확장 계약 (L22)**: 단일 라우터 우선(SPOF 수용). 전환 전제조건 체크리스트(상태공유·SSE고정·writer직렬화·세션SSOT·dedup·L21버킷). tenant_id 1순위 샤딩 축. 스케일업 판단 = L20 지표(라우터+어댑터) 지속 포화. 어댑터 /metrics 노출. 구현 비범위
+
+**관측 워커 신설**: 라우터와 분리된 비동기 워커. 라우터·어댑터 /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
 
 **저장소 인터페이스 신설**: 운영 DB 단일 추상화 계층(SQLite 1차/PostgreSQL 전환). better-sqlite3 채택(PRD 9절 변경). WAL·단일 writer 큐·busy_timeout·user_version 마이그레이션 규약. 9절 "node:sqlite 우선" 폐기
 
 **대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점(L18 tenant_id가 여기서 발급·바인딩). 대시보드 사업 지표 별도 소스. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축)
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축), SPOF, 샤딩(tenant_id 축), 스케일업 판단 지표
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성) / TS.1~8 신설(저장소) / TS.9~14 신설(tenant 키)
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~9 신설(관측성·어댑터 metrics) / TS.1~16 신설(저장소·tenant 키·수평 전환 가드)
