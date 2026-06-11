@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20 확정 / 잔여: L17·L18·L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17 확정 / 잔여: L18·L22·L23·LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] **L17→L18→L19(완료)→L22→L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→**L18→L19(완료)→L22→L23** / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
 | **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
@@ -87,7 +86,7 @@ queued 상태에서도 result 수신 시 → completed (G1: 재전달 전 result
 **jobs 테이블 스키마 (보강)**: job_id, agent_id, context_key, status, egress_status, egress_id, platform_message_id, redeliver_count, created_at, updated_at
 > platform_message_id·기타 job 레코드는 `completed_retention_h`(기본 72h) 동안만 보존, job 청소 시 함께 소멸. 무한 누적 없음(G2 dedup 보호 창 ≪ retention).
 
-**영속성**: T10.6(휘발 허용) 폐기 → durable. 백엔드 node:sqlite 권고, JSONL WAL 폴백. 재시작 시 queued 복원, delivered→queued 회수.
+**영속성**: T10.6(휘발 허용) 폐기 → durable. 백엔드 SQLite(L17 저장소 인터페이스 경유). 재시작 시 queued 복원, delivered→queued 회수.
 
 **SSE 연동**: event_id = 에이전트별 단조 시퀀스. 재접속 Last-Event-ID 기준 유실 delivered만 재push.
 
@@ -222,6 +221,7 @@ system:
 ```
 1. config fail-fast
 2. SQLite quick_check (실패 = 기동 중단 + 알림, 자동 재생성 금지)
+2-b. user_version 마이그레이션 게이트 (L17) — 스키마 버전 불일치 시 마이그레이션 후 진행
 3. 복구 트랜잭션 (단일 원자):
    - delivered → queued 회수 (redeliver_count++)
    - active 세션 복원
@@ -336,6 +336,24 @@ system:
 ```
 - **테스트 (TO 대역 신설, D-L20-6)**: TO.1 /metrics Prometheus 포맷 유효성 / TO.2 /metrics.json 유효성 / TO.3 골든 시그널 카운터 증가 / TO.4 dead_letter 시 알람 트리거 / TO.5 Obsidian SLA 위반 카운트 / TO.6 /metrics 비공개 바인딩(외부 차단) / TO.7 관측 워커가 라우터 직접 호출 안 함(원칙 6 격리) / TO.8 시스템 로그 일단위 파일 롤링(파일명 규칙)
 
+### [#L17] 운영 저장소 계층 규약 — SQLite 구현 + 추상화 (확정)
+
+> 범위 = **계층 1(라우터 운영 DB)만**. 큐(#1)·토큰(#2/#8)·세션(#6)·quota(L21)·audit(#9)·Raw(v6.9). 계층 2(대고객 서비스 DB)는 서브프로젝트로 분리 — 아래 확장 메모만.
+
+- **저장소 추상화 인터페이스 (갈래 C 확정)**: 운영 DB 접근을 **단일 저장소 인터페이스 뒤로** 숨긴다. Raw-sink 패턴(v6.9)을 운영 DB 전체로 확대. 백엔드 교체 시 라우터 코어 코드 무수정.
+  - 1차 구현: SQLite. 전환 대상: PostgreSQL(코어 수평 확장 시 = L22, 또는 대고객 서브프로젝트 연계). 전환 시 트랜잭션 격리 수준 차이는 L22에서 상세.
+- **WAL 모드 (D-L17 확정)**: 전 운영 DB에 `journal_mode=WAL` 적용 — 쓰는 중 읽기 비차단(Admin 조회 끊김 방지). 보조 파일 `-wal`·`-shm` 2개 동반(정상). 백업·삭제 시 본 파일+보조 2개 = **3개 한 묶음**(L23 연계). audit.db의 WAL은 해시 체인 append-only와 충돌 없음(WAL은 저장 방식, 논리 append 유지 — 명문화).
+- **동시 쓰기 직렬화 (D-L17-2 확정)**: SQLite는 동시 쓰기 하나만 허용 → **라우터 내부 단일 writer 큐**로 충돌(SQLITE_BUSY) 구조적 회피(1차). + **busy_timeout 명시 설정**(기본값 0=즉시 에러이므로 반드시 설정, 예 5000ms) 2차 안전망. PRD 기존 "fire-and-forget 큐 직렬화"를 전 쓰기 경로로 일반화.
+- **파일 분리 (D-L17-1 확정)**:
+  - `data/queue.db` (+ -wal, -shm) — 큐·tokens·tokens_admin·sessions·quota_usage **단일 파일**(재시작 복구를 단일 원자 트랜잭션으로; 쪼개면 원자성 깨짐)
+  - `data/audit.db` (+ -wal, -shm) — 감사 전용 분리(불변·해시 체인, #9)
+  - `data/wiki/raw.db` (+ -wal, -shm) — Raw 백엔드 옵션(raw_backend:sqlite일 때만)
+- **스키마 마이그레이션**: `user_version` PRAGMA로 버전 관리. 재시작 시퀀스 quick_check 직후 **마이그레이션 게이트** 추가.
+- **DB 라이브러리 (D-L17-3 확정 — PRD "내장 우선" 변경)**: **better-sqlite3 채택.** 근거(검색 확인): node:sqlite는 RC지만 여전히 "experimental" 표기 + busy_timeout 기본 0; better-sqlite3는 성숙·동기 API·production 실적, 단일 VPS Docker라 네이티브 빌드 의존 부담 작음. 큐·세션·복구 트랜잭션 동시성 안정성이 중요. node:sqlite는 experimental 졸업 후 전환 가능으로 열어둠(저장소 인터페이스로 교체 용이).
+  - ⚠️ 이는 PRD 9절 "node:sqlite 내장 우선, 외부는 별도 승인" 결정의 변경 — CUE 승인 완료(이 항목 킵).
+- **확장 메모 — 계층 2 (대고객 서비스 DB, 설계 안 함·자리만)**: 회원·가입·구독·결제·테넌트는 **별도 서브프로젝트**. **PostgreSQL급 RDB**(조인이 본질), **별도 DB로 격리**. 라우터는 계층 2 직접 호출 금지(원칙 6). 멀티테넌시(9-B) tenant 키가 계층 2에서 실체화될 접점. 대시보드 사업 지표(가입자·매출·구독)는 계층 2 별도 데이터 소스 — L20 운영 metrics와 구분. **이번 코어 설계가 이를 막지 않음만 보장**(현 단계 = 코어 검증 우선).
+- **테스트 (TS 대역 신설, D-L17-4)**: TS.1 WAL 모드 활성 확인 / TS.2 쓰기 중 읽기 비차단 / TS.3 단일 writer 직렬화로 SQLITE_BUSY 미발생 / TS.4 busy_timeout 동작 / TS.5 단일 queue.db 원자 복구 / TS.6 audit·raw 파일 분리 / TS.7 user_version 마이그레이션 게이트 / TS.8 저장소 인터페이스 백엔드 교체 시 코어 무수정
+
 ---
 
 ## 2. 결정 대기 (P-prefix)
@@ -406,6 +424,11 @@ system:
 | P60 | L20 | 알람 발신 주체 | 별도 관측 워커(라우터 직접 호출 금지, 원칙 6) |
 | P61 | L20 | 시스템 로그 파일 규칙 | 일단위 롤링 system-YYYYMMDD.log |
 | P62 | L20 | 시스템 로그 retention | L23 이관 |
+| P63 | L17 | 저장소 추상화 | 단일 인터페이스, SQLite 1차·PostgreSQL 전환 대상(갈래 C) |
+| P64 | L17 | WAL 모드 | 전 운영 DB 적용 (-wal·-shm 동반, 3파일 한 묶음) |
+| P65 | L17 | 동시 쓰기 | 단일 writer 큐 + busy_timeout 병행 |
+| P66 | L17 | 파일 분리 | queue.db 단일(운영) + audit.db + raw.db(옵션) |
+| P67 | L17 | DB 라이브러리 | better-sqlite3 (PRD 내장 우선 변경, CUE 승인). node:sqlite는 졸업 후 전환 가능 |
 
 ---
 
@@ -446,12 +469,16 @@ system:
 | 06-11 | L20 | 라우터 내장 대시보드 vs Dumb Pipe | 내장 대시보드 기각, /metrics·/metrics.json API 노출만(외부 도구 연결) |
 | 06-11 | L20 | 시스템 로그 형식 | 일단위 롤링 system-YYYYMMDD.log 확정(CUE 지시). retention은 L23 이관 |
 | 06-11 | 테스트 ID | 관측 테스트 대역 | TO 대역 신설(TR과 동일 관심사 분리 논리). 혼동 사전 반영 |
+| 06-11 | L17 | PRD 9절 "node:sqlite 내장 우선" | better-sqlite3로 변경(검색 확인: node:sqlite RC지만 experimental·busy_timeout 기본0). CUE 승인. 저장소 인터페이스로 향후 교체 가능 |
+| 06-11 | L17 | #1·#6·#2·#8·L21 "동일 SQLite" 직접 참조 | 저장소 추상화 인터페이스 뒤로 일반화(갈래 C). 재작성 아니라 계층 삽입 |
+| 06-11 | L17 | 대고객 서비스 DB 공백(CUE 지적) | 계층 2(회원·결제·구독, PostgreSQL 별도 DB)는 서브프로젝트로 분리. 코어 검증 우선, 확장 메모만. L24 별도 항목 미생성(CUE 결정) |
+| 06-11 | 테스트 ID | 저장소 테스트 대역 | TS 대역 신설. 혼동 사전 반영 |
 
 ---
 
 ## 4. PRD 반영 대기 메모
 
-**교체/재작성**: 7.2(SSE), 6.3(세션), 6.5(가드), 8절(Admin), 9-D(audit), 9-A(SDK)
+**교체/재작성**: 7.2(SSE), 6.3(세션), 6.5(가드), 8절(Admin), 9-D(audit), 9-A(SDK), 9절(DB 라이브러리 better-sqlite3로 변경)
 
 **삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL
 
@@ -459,18 +486,20 @@ system:
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20)
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17)
 
 **agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록
 
 **4절 보강**: 4.2 태깅·합성 필터, 4.5 합성 규칙
 
-**9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율, rate limit 429 백오프
-
 **관측 워커 신설**: 라우터와 분리된 비동기 워커. /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커
+**저장소 인터페이스 신설**: 운영 DB 단일 추상화 계층(SQLite 1차/PostgreSQL 전환). better-sqlite3 채택(PRD 9절 변경). WAL·단일 writer 큐·busy_timeout·user_version 마이그레이션 규약. 9절 "node:sqlite 우선" 폐기
+
+**대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점. 대시보드 사업 지표 별도 소스. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
+
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB)
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성)
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~8 신설(관측성) / TS.1~8 신설(저장소)
