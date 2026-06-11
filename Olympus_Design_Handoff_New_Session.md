@@ -13,12 +13,11 @@
 
 ## 📍 현재 위치 (다음 세션은 여기부터)
 
-- **마지막 확정**: **L17 (운영 저장소 계층 규약) 확정 완료** (원장 [#L17] 절 + P63~P67).
-  - 갈래 C 채택: 운영 DB를 **단일 저장소 인터페이스**로 추상화(Raw-sink 패턴 확대), SQLite 1차·PostgreSQL 전환 대상 / WAL 모드 전 운영 DB(-wal·-shm 3파일 묶음) / 단일 writer 큐 + busy_timeout 병행 / 파일 분리(queue.db 단일 운영 + audit.db + raw.db 옵션) / user_version 마이그레이션 게이트 / **DB 라이브러리 better-sqlite3 채택**(PRD 9절 "node:sqlite 내장 우선" 변경, CUE 승인 — node:sqlite RC지만 experimental·busy_timeout 기본0) / TS.1~8 테스트 대역 신설
-  - **계층 2(대고객 서비스 DB) = 서브프로젝트로 분리, 이번 비범위.** 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB, 라우터와 격리(원칙 6). 코어 검증 우선, 확장 메모만. L24 별도 항목 미생성(CUE 결정).
-- **다음 항목**: **L18** (tenant_id 구체화 — 키 계약·범위) 브리핑.
+- **마지막 확정**: **L18 (tenant_id 키 계약) 확정 완료** (원장 [#L18] 절 + P68~P71, P54 회수).
+  - **v1 호환 불필요(CUE 확정 — v1 미사용)** → 항상 prefix 방식 채택 / 키: `{tenant_id}:{platform}:...`·`{tenant_id}:{agent_id}`·session_id 접두, **단일 테넌트 기본값 `default`**(조건 분기 없음) / **범위 = 키 계약만**(발급·인증·바인딩은 대고객 서브프로젝트) / tenant_id 출처 현 단계 default 고정, 향후 토큰 도출 / **persona는 tenant 격리(`{tenant}:{agent}`)·플랫폼 초월 — 다른 축**(충돌 아님) / L21 tenant override 회수(P54 해소) / TS.9~14 테스트
+- **다음 항목**: **L22** (수평 확장 경로 — 전환 전제조건 계약) 브리핑.
 - **진행 중 미확정**: 없음.
-- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/TO/TS/T10/TA/T5/T7/T9).
+- **문서 구조 작업 완료**: Session_Protocol.md 신설 / 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전(TR/TO/TS/T10/TA/T5/T7/T9).
 - **남은 문서 작업**: PRD 목차(인덱스) 추가 — 미착수. 물리 분할은 v6.13 일괄 반영 시점으로 보류.
 
 ---
@@ -49,7 +48,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 2 | 인증 | opaque 256-bit, 해시 저장, fail-closed, grace 24h |
 | 3 | Egress | 동기 ACK, egress_id dedup, context FIFO, [1,4,16,60,120]s |
 | 5 | A2A 신원 | 토큰 바인딩, _source_url 삭제, /agents/:id/a2a 전용 |
-| 6 | 세션 신뢰 | ULID, 3중 검증, SQLite, sliding 1h+cap 24h, topic·parent_session_id |
+| 6 | 세션 신뢰 | ULID, 3중 검증, SQLite, sliding 1h+cap 24h, topic·parent_session_id, tenant_id(항상·단일 default) |
 | 7 | cc | listen 타입, CC_RESPONSE_FORBIDDEN, can_initiate 한정 금지 |
 | 10 | 미기록 | persona_key 전 라운드 null, 종료 마커 5종, 미결 안건 기록 |
 | 16 | SLA+재개 | 마커 60초, 후속 세션+parent_session_id(재오픈 기각) |
@@ -57,9 +56,10 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 재시작 | 복구 프로토콜 | 불변식 유실 0·중복 0·수동 0. G1~G9 해소. 보강 6건 확정 완료 |
 | 8 | Admin | 127.0.0.1 기본, scope read/write, CLI 부트스트랩 |
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
-| 21 | rate limit·quota | agent_id 단위(tenant L18 이관), token bucket, quota 건수 기반, cc 비계상, fail-open, TR 대역 |
-| 20 | SLO·관측성 | metrics API(/metrics+json) 노출, 알람 Admin UI 설정→관측 워커 발신, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
-| 17 | 운영 저장소 계층 | 저장소 추상화(C, SQLite→PG 전환), WAL, 단일 writer 큐+busy_timeout, queue.db 단일+audit/raw 분리, better-sqlite3(내장우선 변경), 계층2 서브프로젝트, TS 대역 |
+| 21 | rate limit·quota | agent_id 단위, token bucket, quota 건수 기반, cc 비계상, fail-open, {tenant}:{agent} override, TR 대역 |
+| 20 | SLO·관측성 | metrics API(/metrics+json), 알람 Admin UI→관측 워커, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
+| 17 | 운영 저장소 계층 | 저장소 추상화(C, SQLite→PG), WAL, 단일 writer 큐+busy_timeout, queue.db 단일+audit/raw, better-sqlite3, 계층2 서브프로젝트, TS 대역 |
+| 18 | tenant 키 계약 | 항상 prefix(단일 default), v1 호환 불필요, 키 계약만(발급은 서브프로젝트), persona tenant 격리·플랫폼 초월(다른 축), P54 회수, TS.9~14 |
 
 ---
 
@@ -67,8 +67,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L18** | tenant_id 구체화 (키 계약·범위) | 구조 ← **다음** |
-| **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
+| **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 ← **다음** |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
 | **LB** | B군 모순 해소 4건 일괄 | 최후 |
 
@@ -80,9 +79,8 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 > LB-11~14는 통합 리뷰 D군 문서 결함 번호. PRD 절 번호 아님.
 
-> **L18 주의 (선행 이관 회수)**: L21이 tenant 단위 rate limit·quota를 "구조 예약, 수치·키 L18 이관"(P54)했음. L18에서 tenant_id 키 계약 확정 시 L21 tenant 적용분을 회수해 정합할 것.
-> **L22 주의**: L17 PostgreSQL 전환, L20 시스템 로그 retention은 각각 L22·L23로 이관됨.
-> **L23 주의**: L20 시스템 로그 retention(P62) + L17 WAL 3파일 백업 단위가 L23로 이관됨.
+> **L22 회수 대상**: L17 PostgreSQL 전환(저장소 인터페이스, 트랜잭션 격리 차이) / 재시작 G레지스터 "L22 선결정(단일 라우터 수직 확장 우선, 수평 전제조건 L22)" / L18 tenant_id 샤딩 후보 키.
+> **L23 회수 대상**: L20 시스템 로그 retention(P62) / L17 WAL 3파일(-wal·-shm) 백업 단위 / job completed_retention_h(#1) 정합.
 
 ---
 
@@ -97,9 +95,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 ---
 
-## 결정 대기 P1~P67
+## 결정 대기 P1~P71
 
-원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20, P63~P67=L17)
+원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20, P63~P67=L17, P68~P71=L18)
 
 ---
 
