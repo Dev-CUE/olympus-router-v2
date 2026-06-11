@@ -13,13 +13,12 @@
 
 ## 📍 현재 위치 (다음 세션은 여기부터)
 
-- **마지막 확정**: 재시작·복구 프로토콜 **보강 6건 확정 완료** (원장 [재시작·복구 프로토콜 통합] 절 + G1~G9 레지스터).
-  - 어댑터 /ready 게이팅(P48) / G1 dead_letter / G2 platform_message_id jobs 기록(retention 72h 종속) / G3 복구 트랜잭션 egress pending 회수 / G4 게시→dedup→ACK + at-least-once 명문화 / 시스템 로그(audit 독립, 인프라는 L20)
-- **다음 항목**: **L21** (테넌트/에이전트별 rate limit·quota) 브리핑.
-- **진행 중 미확정**: 없음. (재시작 보강은 확정·원장 반영 완료)
-- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 신설.
+- **마지막 확정**: **L21 (테넌트/에이전트별 rate limit·quota) 확정 완료** (원장 [#L21] 절 + P49~P55).
+  - agent_id 단위만 확정(tenant는 L18 이관) / token bucket / rate limit·quota 2층 분리 / quota 건수 기반(비용 기각=Dumb Pipe) / cc는 rate limit 적용·quota 비계상 / quota 카운터 SQLite 영속 / fail-open(인증 #2 fail-closed와 레이어 구분) / 신규 에러코드 RATE_LIMITED·QUOTA_EXCEEDED / TR.1~8 테스트 대역 신설
+- **다음 항목**: **L20** (SLO·관측성 — 지표·알람·SLO 수치) 브리핑.
+- **진행 중 미확정**: 없음.
+- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/T10/TA/T5/T7).
 - **남은 문서 작업**: PRD 목차(인덱스) 추가 — 미착수. 물리 분할은 v6.13 일괄 반영 시점으로 보류.
-- **주의(이번 세션 이력)**: 재시작 보강이 한때 CUE 승인 전 무단 푸시됨 → 사후 추인 + 푸시 트리거 규칙으로 재발 방지(원장 충돌 로그 참조).
 
 ---
 
@@ -54,9 +53,10 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 10 | 미기록 | persona_key 전 라운드 null, 종료 마커 5종, 미결 안건 기록 |
 | 16 | SLA+재개 | 마커 60초, 후속 세션+parent_session_id(재오픈 기각) |
 | 9+19 | audit | fail-closed, RawSink/AuditSink 분리, 해시 체인, audit.db, 시스템 로그와 독립 레이어 |
-| 재시작 | 복구 프로토콜 | 불변식 유실 0·중복 0·수동 0. G1~G9 해소. **보강 6건 확정 완료**(어댑터 /ready·G2 retention·at-least-once 명문화) |
+| 재시작 | 복구 프로토콜 | 불변식 유실 0·중복 0·수동 0. G1~G9 해소. 보강 6건 확정 완료 |
 | 8 | Admin | 127.0.0.1 기본, scope read/write, CLI 부트스트랩 |
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
+| 21 | rate limit·quota | agent_id 단위(tenant L18 이관), token bucket, quota 건수 기반, cc 비계상, fail-open, TR 대역 |
 
 ---
 
@@ -64,8 +64,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L21** | 테넌트/에이전트별 rate limit·quota | 운영 ← **다음** |
-| **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 |
+| **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 ← **다음** |
 | **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
 | **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
@@ -93,9 +92,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 ---
 
-## 결정 대기 P1~P48
+## 결정 대기 P1~P55
 
-원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P48 = 어댑터 /ready 게이팅, 재시작 보강에서 신설)
+원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55 = L21 rate limit·quota 보류 결정)
 
 ---
 
