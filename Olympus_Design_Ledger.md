@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18·L22 확정 / 잔여: L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18·L22·L23 확정 / 잔여: LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→L18(완료)→L19(완료)→L22(완료)→**L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→L20(완료) / [구조] L17(완료)→L18(완료)→L19(완료)→L22(완료)→L23(완료) / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L23** | 데이터 보존·삭제 정책 | 구조 |
 | **LB** | B군 모순 해소 — 아래 4건 일괄 | 최후 |
 
 **LB 상세**:
@@ -209,6 +208,7 @@ system:
 - **Non-Blocking 예외 명문화**: audit 활성 시 동기 쓰기 경로 진입 — 원칙의 명시적 예외(D6 해소)
 - **L19(인터페이스 분리) 흡수 완료**: RawSink.write→void / AuditSink.write→Result. 인터페이스 공유 선언 폐기
 - **무결성**: 별도 audit.db, append-only + prev_hash 해시 체인
+- **(L23 연계) 보존·세그먼트**: audit는 일→월 세그먼트(`audit-YYYYMM.db`)로 롤오버, 보존·삭제 정책은 L23 참조. 세그먼트 경계 prev_hash 인계로 체인 연속.
 - **테스트**: TA.1~TA.5
 
 ### [재시작·복구 프로토콜 통합] (확정 + 보강 — PRD 독립 절 신설)
@@ -310,7 +310,7 @@ system:
 - **알람 (D-L20-4 확정 — UI 설정으로 변경)**: 알람 규칙(어떤 지표가 어떤 임계 초과 시 알림)을 **#8 Admin UI에서 설정 → yaml 저장 → 관측 워커가 yaml 읽어 판정·Telegram 발신.** 운영자가 코드 수정 없이 임계·on/off 조정. **라우터는 Telegram 직접 호출 안 함(원칙 6 유지)** — 발신은 별도 관측 워커(audit·wiki 워커와 동일 비동기 분리 패턴).
   - 알람 트리거 후보: dead_letter 발생(#3/P13 회수) / audit closed 차단 발생 / 큐 깊이 임계 초과 / quota 소진율 급증 / Obsidian SLA 위반(#16 회수) / SSE 연결 0 지속(에이전트 전체 단절) / **(L22) 스케일업 검토 신호(지속 포화)**
   - 채널: 기존 Telegram 에스컬레이션(escalator) 재사용. PagerDuty 등 외부는 비범위.
-- **시스템 로그 형식 (확정 — 일단위 파일 롤링)**: job 상태 전이(#3/재시작 G1~G4 이관)는 **구조화 JSON 1줄/이벤트**(job_id, agent_id, from_state, to_state, reason, ts). **파일은 일단위 생성·롤링, 파일명 `system-YYYYMMDD.log` 형식**(예: `system-20260101.log`). 자정 롤오버.
+- **시스템 로그 형식 (확정 — 일단위 파일 롤링)**: job 상태 전이(#3/재시작 G1~G4 이관)는 **구조화 JSON 1줄/이벤트**(job_id, agent_id, from_state, to_state, reason, ts). **파일은 일단위 생성·롤링, 파일명 `system-YYYYMMDD.log` 형식**(예: `system-20260101.log`). 자정 롤오버. **(L23 연계) 일→월 합본·retention은 L23 참조.**
   - retention(보존 기간) 수치는 **L23 이관**(D-L20-5). L20은 로그 스키마·파일 규칙·조회 인터페이스까지만.
 - **레이어 구분**: 관측 지표(L20) ≠ audit 로그(#9). audit는 컴플라이언스(메시지 내용), L20은 운영 관측(상태·수치). 별 레이어 — 혼동 사전 박제.
 - **설정안**:
@@ -344,7 +344,7 @@ system:
 - **동시 쓰기 직렬화 (D-L17-2 확정)**: SQLite는 동시 쓰기 하나만 허용 → **라우터 내부 단일 writer 큐**로 충돌(SQLITE_BUSY) 구조적 회피(1차). + **busy_timeout 명시 설정**(기본값 0=즉시 에러이므로 반드시 설정, 예 5000ms) 2차 안전망. PRD 기존 "fire-and-forget 큐 직렬화"를 전 쓰기 경로로 일반화.
 - **파일 분리 (D-L17-1 확정)**:
   - `data/queue.db` (+ -wal, -shm) — 큐·tokens·tokens_admin·sessions·quota_usage **단일 파일**(재시작 복구를 단일 원자 트랜잭션으로; 쪼개면 원자성 깨짐)
-  - `data/audit.db` (+ -wal, -shm) — 감사 전용 분리(불변·해시 체인, #9)
+  - `data/audit.db` (+ -wal, -shm) — 감사 전용 분리(불변·해시 체인, #9). **(L23) 월 세그먼트 시 `audit-YYYYMM.db`로 분화**
   - `data/wiki/raw.db` (+ -wal, -shm) — Raw 백엔드 옵션(raw_backend:sqlite일 때만)
 - **스키마 마이그레이션**: `user_version` PRAGMA로 버전 관리. 재시작 시퀀스 quick_check 직후 **마이그레이션 게이트** 추가.
 - **DB 라이브러리 (D-L17-3 확정 — PRD "내장 우선" 변경)**: **better-sqlite3 채택.** 근거(검색 확인): node:sqlite는 RC지만 여전히 "experimental" 표기 + busy_timeout 기본 0; better-sqlite3는 성숙·동기 API·production 실적, 단일 VPS Docker라 네이티브 빌드 의존 부담 작음. 큐·세션·복구 트랜잭션 동시성 안정성이 중요. node:sqlite는 experimental 졸업 후 전환 가능으로 열어둠(저장소 인터페이스로 교체 용이).
@@ -395,6 +395,67 @@ session_id   {tenant_id} 접두
 - **샤딩 축 (D-L22-2 확정)**: **tenant_id를 1순위 수평 분할(샤딩) 축**으로 명시. L18 키 구조(모든 키 최상위 prefix=tenant_id)가 이를 지원. 단일 테넌트(default) 단계엔 무의미, 다중 테넌트 시점 전제.
 - **전환 막지 않기 위한 현 단계 계약**: 상태는 저장소 인터페이스 경유(L17 — 로컬 메모리 가정 코드 금지). session_id·idempotency 검사는 저장소 통해(인메모리 전용 금지). L21 인메모리 버킷은 "수평 전환 시 공유화 필요" 항목으로 명시.
 - **테스트 (TS/TO 대역 공유)**: TS.15 상태가 저장소 인터페이스 경유(로컬 메모리 하드코딩 0) / TS.16 session·idempotency 저장소 경유 / TO.9 어댑터 /metrics 노출(스케일업 판단 지표) / 다중 라우터 실런타임 테스트는 전환 구현 시점(현 비범위).
+
+### [#L23] 데이터 보존·삭제 정책 (확정)
+
+> 코어 전체의 보존 기간(retention)·삭제 규칙을 단일 정책으로 확정. 각 항목이 "L23 이관"으로 미뤘던 것을 회수. 삭제·관리 UI·플랜·과금은 대고객 서브프로젝트 책임(L18·L17 계층 2 분리 일관), 코어는 메커니즘·인터페이스만.
+
+#### A. 일→월 롤오버 공통 정책 (D-L23-1 확정)
+- **단위**: 일단위 파일 → 월단위 파일 (텍스트·DB 공통 **정책**). 구현 메커니즘은 레이어별 분리(혼동 사전 유지 — audit≠시스템 로그).
+- **경계**: 기준시(base timezone) 자정. 일·월 롤오버 모두 동일 기준.
+- **기준시**: 코어 폴백 기본값 **UTC**. 운영 주입 디폴트 **UTC+9(Asia/Seoul)**. tenant별 타임존은 대고객 서브프로젝트 주입(코어는 주입 인터페이스만). 설정 경로: 관리자 UI → yaml → 로그/audit 워커 적용(L20 알람 패턴 동형).
+- **기준시 변경 적용**: 진행 중 일/월 파일은 기존 기준 유지, **다음 월 경계부터** 신 기준 적용. 변경 이력 yaml 기록.
+- **롤오버 원자성**: L17 단일 writer 큐 경유 파일 스위칭. 경계 시점 레코드는 큐 순서대로 처리.
+- **DST**: 기본 UTC라 무영향. 기준시가 DST 지역이면 경계 불균등(23/25h) 허용 — 무결성 무관, 명문화.
+
+#### B. 레이어별 구현 (D-L23-2 확정)
+| 레이어 | 일 파일 | 월 파일 | 무결성 |
+|--------|---------|---------|--------|
+| 시스템 로그(L20) | `system-YYYYMMDD.log` | `system-YYYYMM.log` 합본+gzip | 없음(운영) |
+| audit(#9) | `audit-YYYYMMDD.db` | `audit-YYYYMM.db` 세그먼트 통합 | **해시 체인 보존**(컴플라이언스) |
+- audit 월 통합 시 세그먼트 경계 **prev_hash 인계** 필수. 합본이 레코드·순서·해시 1비트도 변경 금지. 텍스트 concat 아님 — DB 세그먼트.
+
+#### C. 회수 항목별 retention (D-L23-3 확정)
+1. **audit.db**: 무결성=보존 구간 내 해시 체인 불변(절대). 보존 기간=tenant별 설정값 주입, **기본 30일**. 플랜↔기간 매핑·디스크 용량·과금은 서브프로젝트. **삭제는 세그먼트 단위, 세그먼트 전체가 30일 만료된 뒤에만 삭제(보존 30일 절대 미위반). 당월 활성 세그먼트 보호.** 중간 레코드 삭제 금지(체인 보호).
+2. **시스템 로그**: 월파일 단위 보존. **기본 30일**(자리표시자, 운영 디버깅용). 초과 월파일 삭제. `system.observability.system_log.retention_days`.
+3. **job 72h**: `completed_retention_h: 72` 유지. L23은 모순 점검만 → dedup창(분) ≪ job 72h ≪ audit 30일. **정합 OK.**
+4. **WAL 3파일**: 본파일+`-wal`+`-shm` = 3개 한 묶음 백업·삭제 명문화. 라이브 백업은 `.backup`/`VACUUM INTO`(원자 스냅샷) 권장. 정책은 3파일 묶음 원칙 박제.
+5. **quota_usage / 세션 / Mem0 / Obsidian**: quota_usage=만료 윈도우 행 정리(기본 7일, 목적은 재시작 복원). 세션(sessions)=cap 24h 후 디버깅·parent_session_id 추적용 보존(기본 30일) 후 정리. **Mem0/Obsidian=코어 소관 아님(원칙 6), 코어 미규정 명시.** 삭제는 SDK·워커 책임, 경계만 박제.
+6. **tenant 삭제 연쇄**: `{tenant_id}:` prefix 가진 전 데이터 연쇄 삭제(context·session·quota_usage·job·rate limit 버킷). **audit는 보존 정책 따름**(직전 "예외 보존" 철회 — 플랜 기간제로 재확정). 법적 hold 시 보류 자리(판정은 서브프로젝트). 실삭제 트리거·실행=서브프로젝트, 코어는 prefix 연쇄 삭제 인터페이스만.
+
+#### D. 데이터 관리 & 배치잡 — 단일 관리자 UI (D-L23-4 확정)
+- **단일 관리자 인터페이스(서브프로젝트)**: 데이터 삭제/백업/추출 + 배치잡 생성·세팅을 하나의 관리자 UI에서 처리. (코어 #8 운영 admin과 별개 레이어 — 대고객 서브프로젝트 admin. 혼동 사전 후보.)
+- **배치잡**: 관리자 UI에서 생성·설정(스케줄·on/off·retention·대상) → yaml 기록 → 배치 워커가 읽어 실행. L20 알람 패턴 동형. 라우터 직접 실행 금지, 별도 배치 워커(원칙 6).
+  - 배치 2종: (1) 보존 만료 삭제(30일 충족 세그먼트 — audit·로그·세션·quota), (2) 해지 tenant 익일 연쇄 삭제(E절).
+- **코어 책임**: 세그먼트 삭제·조회·추출·배치 실행 인터페이스 + 무결성 검증. 권한 판정·화면·스케줄러·플랜 매핑은 서브프로젝트.
+- **audit 레코드 단위 삭제·수정 금지(관리자 권한 포함). 세그먼트 단위만.**
+- **추출(export)**: audit는 해시 체인 포함(무결성 검증 가능) 형태 권고. 형식 상세는 서브프로젝트.
+- **고객 UI**: 조회/내려받기만. 삭제 불가(삭제 API 미연결).
+
+#### E. 고객 해지 → 익일 일괄 삭제 배치 (D-L23-5 확정)
+- 해지 즉시: tenant 상태 `pending_deletion` 마킹 + 타임스탬프. 실삭제 안 함.
+- 익일 배치: 기준시(tenant 타임존, 기본 UTC+9) 자정 이후, `pending_deletion` tenant 일괄 연쇄 삭제(C-6 prefix 기준).
+- 유예 = 해지 철회 창(익일까지). 철회 시 마킹 해제.
+- 멱등: 중복 실행·재시도 안전(삭제 완료 tenant skip).
+- audit: 보존 정책 따름 — 해지로 즉시 삭제 안 함, 만료 시 세그먼트 정리.
+- 주체: 서브프로젝트(배치 스케줄·상태관리). 코어는 prefix 연쇄 삭제 인터페이스만.
+
+#### 설정안
+```yaml
+system:
+  rollover:
+    base_timezone: "UTC"              # 코어 폴백. 운영 주입 디폴트 "Asia/Seoul"(UTC+9)
+    granularity: "daily_to_monthly"   # 일→월
+  retention:
+    audit_days: 30                    # 플랜 기반 주입, 기본 30. 세그먼트 단위 만료 삭제
+    system_log_days: 30               # 자리표시자
+    quota_usage_days: 7
+    session_days: 30
+    # job: completed_retention_h=72 (system.queue, 기존 확정 — 변경 없음)
+    # Mem0/Obsidian: 코어 미규정(원칙 6, 외부)
+```
+
+- **테스트 (TD 대역 신설, D-L23-6)**: TD.1 일→월 롤오버 경계(시스템 로그) / TD.2 audit 월 세그먼트 통합+prev_hash 인계 / TD.3 기준시 자정 롤오버(UTC 폴백·Seoul 주입) / TD.4 시스템 로그 retention 월파일 삭제 / TD.5 audit 세그먼트 전체 30일 만료 후에만 삭제(미만료 거부) / TD.6 당월 세그먼트 삭제 거부 / TD.7 WAL 3파일 묶음 백업·삭제 / TD.8 quota_usage·세션 만료 정리 / TD.9 job 72h+dedup 정합 / TD.10 tenant 연쇄 삭제(audit 보존 확인) / TD.11 해지 pending_deletion 마킹(즉시 미삭제) / TD.12 익일 배치 연쇄 삭제+멱등 / TD.13 audit 레코드 단위 삭제 거부 / TD.14 배치잡 UI 설정→yaml→워커 실행 / TD.15 Mem0/Obsidian 코어 비책임 경계
 
 ---
 
@@ -465,7 +526,7 @@ session_id   {tenant_id} 접두
 | P59 | L20 | 알람 관리 | Admin UI 설정→yaml→관측 워커 판정·Telegram 발신 |
 | P60 | L20 | 알람 발신 주체 | 별도 관측 워커(라우터 직접 호출 금지, 원칙 6) |
 | P61 | L20 | 시스템 로그 파일 규칙 | 일단위 롤링 system-YYYYMMDD.log |
-| P62 | L20 | 시스템 로그 retention | L23 이관 |
+| P62 | L20 | 시스템 로그 retention | **L23에서 회수·확정** — 월파일 단위 30일(자리표시자) |
 | P63 | L17 | 저장소 추상화 | 단일 인터페이스, SQLite 1차·PostgreSQL 전환 대상(갈래 C) |
 | P64 | L17 | WAL 모드 | 전 운영 DB 적용 (-wal·-shm 동반, 3파일 한 묶음) |
 | P65 | L17 | 동시 쓰기 | 단일 writer 큐 + busy_timeout 병행 |
@@ -480,6 +541,18 @@ session_id   {tenant_id} 접두
 | P74 | L22 | 스케일업 판단 지표 | L20 지표 재사용(라우터+어댑터), 지속 포화 시 전환 신호 |
 | P75 | L22 | 어댑터 지표 노출 | 어댑터도 /metrics 자체 노출(L20 형식), 관측 워커 수집 |
 | P76 | L22 | 전환 전제조건 | 상태공유·SSE고정·writer직렬화·세션SSOT·dedup·L21버킷 공유화 (전환 시 해소) |
+| P77 | L23 | 일→월 롤오버 | 텍스트·DB 공통 정책(구현 레이어별 분리). 일단위→월단위 |
+| P78 | L23 | 기준시 | 코어 폴백 UTC / 운영 주입 디폴트 Asia/Seoul(UTC+9). tenant별은 서브프로젝트. 관리자 UI→yaml |
+| P79 | L23 | audit 보존 | 플랜 기반(기본 30일). 세그먼트(audit-YYYYMM.db) 전체 30일 만료 후 통째 삭제, 당월 불가, 레코드 단위 삭제 금지 |
+| P80 | L23 | 시스템 로그 retention | 월파일 단위 30일(자리표시자) |
+| P81 | L23 | quota_usage·세션 보존 | quota_usage 7일 / 세션 30일 |
+| P82 | L23 | Mem0/Obsidian 보존 | 코어 미규정(원칙 6, 외부 책임) |
+| P83 | L23 | tenant 삭제 연쇄 | {tenant}: prefix 전 데이터. audit는 보존 정책 따름(즉시 삭제 아님), 법적 hold 자리 |
+| P84 | L23 | WAL 백업·삭제 단위 | 본+ -wal + -shm = 3파일 한 묶음. 라이브 백업 .backup/VACUUM INTO 권장 |
+| P85 | L23 | 데이터 관리/배치 UI | 단일 관리자 UI(서브프로젝트). 삭제/백업/추출+배치잡 생성·세팅. 고객 UI는 조회/내려받기만(삭제 불가). 코어는 인터페이스만 |
+| P86 | L23 | 배치잡 설정 | 관리자 UI 생성·설정→yaml→배치 워커 실행(L20 알람 패턴). 2종: 보존 만료 삭제 / 해지 익일 연쇄 |
+| P87 | L23 | 고객 해지 삭제 | 익일 배치(pending_deletion 마킹, 멱등, 철회 창). audit는 보존 정책 따름 |
+| P88 | L23 | TD 테스트 대역 | TD.1~15 신설(롤오버·retention·삭제·배치) |
 
 ---
 
@@ -533,6 +606,17 @@ session_id   {tenant_id} 접두
 | 06-11 | L22 | L21 인메모리 버킷 vs 다중 라우터 | 전환 시 공유 버킷 필요 — L22 전제조건(P76)으로 명시. 현 단일은 무해 |
 | 06-11 | L22 | 어댑터 지표 부재(CUE 지적) | 어댑터도 /metrics 노출(L20 보강). 스케일업 판단에 라우터+어댑터 함께 |
 | 06-11 | L22 | 스케일업 판단 부재(CUE 지적) | L20 지표 재사용해 전환 신호 명시(지속 포화). 신규 모니터링 미신설 |
+| 06-11 | L23 | L20 P62 시스템 로그 retention | L23에서 회수·확정(월파일 30일) |
+| 06-11 | L23 | L17 WAL -wal·-shm | 백업·삭제 단위 3파일 한 묶음으로 L23 명문화 |
+| 06-11 | L23 | #1 job 72h vs audit 30일 | 정합 점검 OK — dedup창 ≪ 72h ≪ audit 30일 |
+| 06-11 | L23 | #9 audit 해시 체인 vs 기간 삭제 | 세그먼트(audit-YYYYMM.db) 단위 삭제로 양립. 중간 레코드 삭제 금지, 당월 보호, 세그먼트 전체 30일 만료 후 삭제 |
+| 06-11 | L23 | audit 보존 vs tenant 연쇄 삭제(직전 "예외 보존") | 철회 — audit도 플랜 보존 정책 따름. 법적 hold만 보류 자리 |
+| 06-11 | L23 | tenant별 타임존/audit 플랜/관리 UI vs L18 범위 | 코어는 주입·삭제·조회·추출 인터페이스만. 발급·플랜·과금·UI·권한은 대고객 서브프로젝트 — L18 분리 유지 |
+| 06-11 | L23 | Mem0/Obsidian retention vs 원칙 6 | 코어 미규정(외부 책임)으로 회피 |
+| 06-11 | L23 | 기준시 UTC vs 디폴트 Seoul | 코어 폴백 UTC / 운영 주입 디폴트 Asia/Seoul(UTC+9)로 양립 |
+| 06-11 | L23 | 일→월 공통 롤오버 vs 혼동 사전(audit≠시스템 로그) | 정책만 공통, 구현 분리(텍스트 합본 vs DB 세그먼트)로 유지 |
+| 06-11 | L23 | 관리자 삭제 vs audit 무결성 | 세그먼트 단위·당월 불가·레코드 단위 금지로 무결성 보존 |
+| 06-11 | 테스트 ID | 보존·삭제 테스트 대역 | TD 대역 신설(TR/TO/TS 동일 관심사 분리 논리). 혼동 사전 반영 대상 |
 
 ---
 
@@ -546,9 +630,9 @@ session_id   {tenant_id} 접두
 
 **신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17) / tenant 키 계약(L18) / 수평 확장 경로 계약(L22)
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21) / SLO·관측성 계약(L20) / 운영 저장소 계층 규약(L17) / tenant 키 계약(L18) / 수평 확장 경로 계약(L22) / 데이터 보존·삭제 정책(L23)
 
-**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록 / system.tenant(default 기본값·정규화 규칙)
+**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록 / system.tenant(default 기본값·정규화 규칙) / system.rollover(base_timezone·granularity) / system.retention(audit_days·system_log_days·quota_usage_days·session_days)
 
 **4절 보강**: 4.2 태깅·합성 필터, 4.5 합성 규칙
 
@@ -556,14 +640,18 @@ session_id   {tenant_id} 접두
 
 **수평 확장 계약 (L22)**: 단일 라우터 우선(SPOF 수용). 전환 전제조건 체크리스트(상태공유·SSE고정·writer직렬화·세션SSOT·dedup·L21버킷). tenant_id 1순위 샤딩 축. 스케일업 판단 = L20 지표(라우터+어댑터) 지속 포화. 어댑터 /metrics 노출. 구현 비범위
 
+**데이터 보존·삭제 정책 (L23)**: 일→월 롤오버(텍스트·DB 공통 정책, 구현 레이어별 분리). 기준시 UTC 폴백·운영 디폴트 Asia/Seoul. audit 플랜 보존(기본 30일)·세그먼트(audit-YYYYMM.db) 단위 삭제·당월 보호·레코드 단위 삭제 금지. 시스템 로그 30일. WAL 3파일 묶음. quota_usage 7일·세션 30일. Mem0/Obsidian 코어 미규정. tenant 삭제 연쇄(audit 보존 정책 따름). 단일 관리자 UI(서브프로젝트)=삭제/백업/추출+배치잡 생성·세팅, 고객 UI 조회/내려받기만. 고객 해지→익일 배치(pending_deletion·멱등·철회 창). 코어는 메커니즘·인터페이스만, 플랜·과금·UI·권한은 서브프로젝트
+
 **관측 워커 신설**: 라우터와 분리된 비동기 워커. 라우터·어댑터 /metrics·시스템 로그 감시 → Admin UI yaml 규칙 판정 → Telegram 알람 발신(라우터 직접 호출 금지, 원칙 6)
+
+**배치 워커 신설 (L23)**: 라우터와 분리된 비동기 워커. 관리자 UI yaml 배치 설정 읽어 실행 — 보존 만료 삭제(세그먼트 단위)·해지 tenant 익일 연쇄 삭제. 라우터 직접 실행 금지(원칙 6).
 
 **저장소 인터페이스 신설**: 운영 DB 단일 추상화 계층(SQLite 1차/PostgreSQL 전환). better-sqlite3 채택(PRD 9절 변경). WAL·단일 writer 큐·busy_timeout·user_version 마이그레이션 규약. 9절 "node:sqlite 우선" 폐기
 
-**대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점(L18 tenant_id가 여기서 발급·바인딩). 대시보드 사업 지표 별도 소스. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
+**대고객 서비스 계층(서브프로젝트, 향후)**: 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB. 라우터와 격리(원칙 6). 멀티테넌시(9-B) 실체화 접점(L18 tenant_id가 여기서 발급·바인딩). 대시보드 사업 지표 별도 소스. **데이터 관리 단일 관리자 UI·플랜↔보존 매핑·디스크 용량·과금·tenant 해지 트리거·tenant별 타임존 주입도 여기 책임(L23)**. 코어 검증 후 별도 프로젝트로 설계 — 현 v6.13 비범위
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축), SPOF, 샤딩(tenant_id 축), 스케일업 판단 지표
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축), SPOF, 샤딩(tenant_id 축), 스케일업 판단 지표, 일→월 롤오버, 기준시(base_timezone), audit 세그먼트(audit-YYYYMM.db), WAL 3파일 묶음, 배치 워커, pending_deletion(해지 익일 배치)
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~9 신설(관측성·어댑터 metrics) / TS.1~16 신설(저장소·tenant 키·수평 전환 가드)
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~9 신설(관측성·어댑터 metrics) / TS.1~16 신설(저장소·tenant 키·수평 전환 가드) / TD.1~15 신설(보존·삭제·롤오버·배치)
