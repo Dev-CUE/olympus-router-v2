@@ -2,7 +2,7 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작·8 확정 / 잔여: L21·L20·L17·L18·L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8 확정 / 잔여: L21·L20·L17·L18·L22·L23·LB
 
 ---
 
@@ -12,6 +12,7 @@
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
+5. **원장 쓰기 권한**: 새 세션 에이전트는 GitHub 읽기 전용. 원장 갱신은 이 창(MCP 쓰기 권한 보유)에서 수행. 새 세션이 확정 블록을 출력하면 CUE가 이 창에 전달 → 이 창이 원장에 반영.
 
 ---
 
@@ -59,7 +60,7 @@
 - 계약 필수 포함: 하트비트(주석 라인, 주기 15~30s 권고) / 클라이언트 수신 타임아웃 / Last-Event-ID 재전달 / 이벤트마다 flush, 압축 비활성
 - 검증 항목: Cloudflare Tunnel SSE 스트리밍 통과 + 유휴 연결 유지 (T10.x 실연동)
 
-### [#1] Job Queue 상태머신 + 영속성 (초안 확정, 결정 보류)
+### [#1] Job Queue 상태머신 + 영속성 (확정, 결정 보류)
 
 **상태 6종**: queued / delivered / completed / failed / expired / dead_letter
 
@@ -79,6 +80,8 @@ queued 상태에서도 result 수신 시 → completed (G1: 재전달 전 result
 - 종결 상태(completed/failed/expired/dead_letter) 전이 없음
 - 종결 job에 지각 result → UNKNOWN_JOB 거부 + 로그
 - expired/dead_letter 진입 시 어댑터로 실패 통지 (좀비 세션 차단)
+
+**jobs 테이블 스키마 (보강)**: job_id, agent_id, context_key, status, egress_status, egress_id, platform_message_id, redeliver_count, created_at, updated_at
 
 **영속성**: T10.6(휘발 허용) 폐기 → durable. 백엔드 node:sqlite 권고, JSONL WAL 폴백. 재시작 시 queued 복원, delivered→queued 회수.
 
@@ -112,7 +115,7 @@ system:
 ### [#3] Egress 계약 — 라우터→어댑터 전달 보장 (확정)
 
 - **흐름**: POST /result → 라우터 영속화 후 200 → 비동기 egress → POST {adapter_url}/egress
-- **ACK**: 동기 — 어댑터 200 = 플랫폼 게시 완료 + platform_message_id
+- **ACK**: 동기 — 어댑터 200 = 플랫폼 게시 완료 + platform_message_id (jobs 테이블에 기록 → 라우터가 재발사 차단에 활용)
 - **재시도**: 5xx/timeout만 [1,4,16,60,120]s. 4xx는 즉시 실패
 - **중복 방지**: egress_id(job_id 파생) dedup — 재시도발 중복 게시 차단
 - **상태**: jobs 테이블 egress_status 컬럼(pending/sent/failed)
@@ -120,6 +123,7 @@ system:
 - **실패 통지**: dead_letter/expired → JOB_EXPIRED / JOB_DEAD_LETTER (신규 2종)
 - **인증**: 어댑터별 shared secret(env) 헤더, fail-closed
 - **원칙**: Zero Inbound는 에이전트 대상. 어댑터는 inbound 허용
+- **시스템 로그**: job 상태 전이(G1~G4) 추적 — audit와 독립 레이어. 로그 형태·retention·쿼리는 L20 소관
 - **테스트**: T10.23~29
 
 ### [#5] A2A 신원 모델 — 토큰 바인딩 (확정)
@@ -141,15 +145,15 @@ system:
 - **TTL**: sliding idle 1h + absolute cap 24h. 만료 시 A2A_SESSION_EXPIRED 통지
 - **테스트**: T5.17 갱신 / T5.25~29 / T5.22 갱신
 
-### [재시작 시나리오 공백 레지스터 G1~G9]
+### [재시작 시나리오 공백 레지스터 G1~G9] (확정 — 보강 완료)
 
 | G | 내용 | 처리 |
 |---|------|------|
-| G1 | queued 회수 후 result 도착 경쟁 | queued 상태에서도 result→completed 허용 |
-| G2 | egress 재시도 ~21s < 어댑터 재기동 | [1,4,16,60,120]s로 수정 |
-| G3 | 어댑터 dedup 인메모리 휘발 | P21: dedup 영속화 (결정 대기) |
-| G4 | 플랫폼별 ingress 의미론 상이 | Telegram: offset 후 전진 / Slack: 선응답+비동기 / Discord: RESUME |
-| G5 | 라우터 다운 시 어댑터 ingress 재시도 | P22: 백오프 최대 5분 (결정 대기) |
+| G1 | queued 회수 후 result 도착 경쟁 | queued 상태에서도 result→completed 허용. 시스템 로그로 추적 |
+| G2 | egress 재시도 ~21s < 어댑터 재기동 + platform_message_id 재발사 | [1,4,16,60,120]s + platform_message_id jobs 기록으로 라우터가 재발사 차단 |
+| G3 | 복구 트랜잭션의 pending egress 회수 명시 | 부팅 복구 트랜잭션에 egress pending → 재시도 큐 복원 명시 |
+| G4 | 게시→dedup 커밋→ACK 순서 + at-least-once 잔여 중복 한계 | 어댑터 dedup 영속화(P21). 잔여 중복은 at-least-once 속성으로 명문화 |
+| G5 | 라우터 다운 시 어댑터 ingress 재시도 | P22: 백오프 최대 5분 |
 | G6 | SDK result 재시도 미정 | 9-A 보강: 백오프 + job_id 멱등 |
 | G7 | DB 손상(quick_check 실패) | fail-fast + 알림. 자동 재생성 금지 |
 | G8 | 복구 중 ingress 수용 위험 | /health·/ready 분리. ready 전 503 |
@@ -162,7 +166,7 @@ system:
 | Slack | 수 분 내 3회 재시도 후 드롭 |
 | Discord | resume 윈도우 내 재전달, 초과 시 유실 |
 
-**#22(L22) 선결정**: 단일 라우터 + 수직 확장 우선. 수평 전환 전제조건은 L22에서 계약으로만 명시.
+**L22 선결정**: 단일 라우터 + 수직 확장 우선. 수평 전환 전제조건은 L22에서 계약으로만 명시.
 
 ### [#7] cc — SSE 전달·차단·수명 정의 (확정)
 
@@ -198,7 +202,8 @@ system:
 
 ### [#9] audit-sink + 인터페이스 분리(L19 흡수, 완료) (확정)
 
-- **위치**: 옵션 모듈, 기본 OFF
+- **위치**: 옵션 모듈, 기본 OFF. **시스템 로그(운영)와 레이어 분리 — 독립 동작, 상호 토글 영향 없음**
+  - audit = 메시지 내용(컴플라이언스). 시스템 로그 = job 상태 전이(운영). 같은 egress라도 audit는 "게시한 텍스트", 시스템 로그는 "전달 상태·재시도·dedup"
 - **적재**: 라우터 동기 기록. 이벤트 4종: ingress/egress/a2a/admin
 - **failure_mode**: 기본 closed. closed=해당 메시지 503+AUDIT_UNAVAILABLE, open=통과+지표
 - **Non-Blocking 예외 명문화**: audit 활성 시 동기 쓰기 경로 진입 — 원칙의 명시적 예외(D6 해소)
@@ -206,19 +211,37 @@ system:
 - **무결성**: 별도 audit.db, append-only + prev_hash 해시 체인
 - **테스트**: TA.1~TA.5
 
-### [재시작·복구 프로토콜 통합] (확정 — PRD 독립 절 신설)
+### [재시작·복구 프로토콜 통합] (확정 + 보강 — PRD 독립 절 신설)
 
 **불변식**: 모든 경계 = (재시도+멱등) 쌍 → 유실 0·중복 0·수동 0
 
-**라우터**: config fail-fast → SQLite quick_check(실패=기동중단, 자동재생성 금지) → 복구 트랜잭션(delivered→queued, 세션, egress) → audit 준비 → ready 선언(전까지 503) → SSE 수용 → egress FIFO 재개
+**라우터 부팅 시퀀스**:
+```
+1. config fail-fast
+2. SQLite quick_check (실패 = 기동 중단 + 알림, 자동 재생성 금지)
+3. 복구 트랜잭션 (단일 원자):
+   - delivered → queued 회수 (redeliver_count++)
+   - active 세션 복원
+   - egress pending → 재시도 큐 복원  ← G3 보강
+4. audit 준비 (closed 모드면 필수, 미완료 시 ready 불가)
+5. /ready 선언 (이전 ingress 503)
+6. SSE 수용 (Last-Event-ID 기준 재push)
+7. egress FIFO 재개
+```
 
-**어댑터**: env fail-fast → dedup 영속 오픈 → 플랫폼 재연결 → 재개
+**어댑터**: env fail-fast → dedup 영속 오픈(P21) → 플랫폼 재연결 → ingress·egress 재개
 
-**에이전트**: SSE 접속. Last-Event-ID 제출=연결단절(유실분만), 미제출=신규시작(delivered 전체 재push)
+**에이전트**: SSE 접속
+- Last-Event-ID 제출 = 연결 단절(유실분만 재push)
+- Last-Event-ID 미제출 = 신규 시작 신호 → delivered 전체 재push + lease 갱신 (G9)
 
-**호스트 전체**: 라우터 ready → 어댑터 순서 권장(compose healthcheck), 어긋나도 G5 흡수
+**호스트 전체**: 라우터 ready → 어댑터 순서 권장(compose healthcheck). 어긋나도 G5(ingress 재시도) 흡수.
 
-**테스트**: T10.36~38, TA.6
+**시스템 로그**: G1~G4 전이 추적. audit와 독립 레이어. 로그 형태·retention·쿼리는 L20 소관.
+
+**at-least-once 명문화**: 게시→dedup 커밋→ACK 사이 어댑터 사망 시 잔여 중복 게시 가능 — at-least-once 속성으로 명문화. 어댑터 dedup 영속화(P21)로 최소화하되 완전 제거는 보장하지 않음.
+
+**테스트**: T10.36~38, TA.6, T10.39(복구 트랜잭션 egress pending 재개 확인)
 
 ### [#8] Admin API 인증/인가 (확정)
 
@@ -259,7 +282,7 @@ system:
 | P18 | #6 | 무효 세션 에러 | A2A_INVALID_SESSION+meta |
 | P19 | #6 | 세션 영속화 | SQLite |
 | P20 | #6 | 세션 TTL | sliding 1h + cap 24h |
-| P21 | G3 | 어댑터 dedup 영속화 | 채택 |
+| P21 | G4 | 어댑터 dedup 영속화 | 채택 (at-least-once 잔여 중복 최소화) |
 | P22 | G5 | ingress 재시도 | 최대 5분 |
 | P23 | #7 | listen 만료 | 조용히 expired |
 | P24 | #7 | metadata-only | 기각 |
@@ -301,7 +324,7 @@ system:
 | 06-11 | #5 | _source_url·url·가드·T5.21·getUrl | 일괄 삭제/교체 |
 | 06-11 | #6 | 세션 서술·D3/D5/D10 | 6.3 재작성·해소 |
 | 06-11 | G1 | #1 상태머신 | queued+result→completed 추가 |
-| 06-11 | G4 | G4 초안 | 플랫폼별 일반화 |
+| 06-11 | G4 | G4 초안 | 플랫폼별 일반화 → G2~G4 재시작 보강으로 확장 |
 | 06-11 | #7 | #1 상태머신·T5.11 | listen 타입 lease 제외 |
 | 06-11 | 4.2 | PRD 4.2/4.5 | 태깅·합성 필터 추가 |
 | 06-11 | #10 | C5/D8·resolved 용어 | 해소·갱신 |
@@ -310,6 +333,7 @@ system:
 | 06-11 | 재시작 | G1~G6 산재 규칙 | 통합 절 신설, G7~G9 추가 |
 | 06-11 | #8 | PRD 8절·리뷰B 4.3 | 재작성·해소 |
 | 06-11 | 번호체계 | L/P 혼용 혼동 | 번호 체계 정의 섹션 추가, L-prefix 명시 |
+| 06-11 | 재시작 보강 | #9 audit-시스템로그 혼용, G2~G4 미완, jobs 스키마 | 새 세션 검토 반영 — audit/시스템로그 분리 명문화, G2~G4 재정의, jobs 스키마 보강, at-least-once 명문화, 복구 트랜잭션 egress pending 추가 |
 
 ---
 
@@ -331,6 +355,6 @@ system:
 
 **9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~38 신설 / TA.1~6 신설
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설
