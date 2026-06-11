@@ -1,7 +1,8 @@
 > ⛔ **새 세션 필수 — 설계 착수 전 반드시 읽어라**
-> 1. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
-> 2. `Olympus_Design_Handoff_New_Session.md` (현재 위치)
-> 이 원장만 읽고 설계에 착수하지 마라 = 프로토콜 위반. SSOT 우선순위: PRD > 이 원장 > 핸드오프.
+> 1. `HANDOFF.md` (단일 진입점 — 현재 위치·역할·다음·문서 지도)
+> 2. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
+> 이 원장만 읽고 설계에 착수하지 마라 = 프로토콜 위반. SSOT 우선순위: PRD > 이 원장 > 핸드오프(HANDOFF.md).
+> ※ 진입점 일원화(06-11): 과거 `Olympus_Design_Handoff_New_Session.md`는 HANDOFF.md로 통합됨.
 
 # Olympus v6.13 설계 원장 (Design Ledger)
 
@@ -617,6 +618,8 @@ system:
 | 06-11 | L23 | 일→월 공통 롤오버 vs 혼동 사전(audit≠시스템 로그) | 정책만 공통, 구현 분리(텍스트 합본 vs DB 세그먼트)로 유지 |
 | 06-11 | L23 | 관리자 삭제 vs audit 무결성 | 세그먼트 단위·당월 불가·레코드 단위 금지로 무결성 보존 |
 | 06-11 | 테스트 ID | 보존·삭제 테스트 대역 | TD 대역 신설(TR/TO/TS 동일 관심사 분리 논리). 혼동 사전 반영 대상 |
+| 06-11 | 문서구조 | 진입점 다중화(HANDOFF/Design_Handoff/v610) | HANDOFF.md 단일 진입점으로 일원화. Design_Handoff_New_Session 통합·v610 아카이브. 원장·Session_Protocol 게이트 포인터 갱신 |
+| 06-11 | 16절 | 재논의금지 임시조치 | LLM 메모리 오염 방지용 임시 방어였음 → 킵 프로토콜이 대체, 해제(R6). R1~R5 이력 보존, "재논의 금지"→"확정·변경 시 CUE 승인" 완화 |
 
 ---
 
@@ -652,6 +655,8 @@ system:
 
 **용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증), 4 골든 시그널, SLO/SLA 구분, 관측 워커, 저장소 인터페이스, WAL, 단일 writer 큐, 계층1(운영 DB)·계층2(대고객 서비스 DB), tenant_id(항상 prefix·단일 default), persona tenant 격리 vs 플랫폼 초월(다른 축), SPOF, 샤딩(tenant_id 축), 스케일업 판단 지표, 일→월 롤오버, 기준시(base_timezone), audit 세그먼트(audit-YYYYMM.db), WAL 3파일 묶음, 배치 워커, pending_deletion(해지 익일 배치)
 
-**문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
+**문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류 / 진입점 일원화(HANDOFF.md 단일, Design_Handoff_New_Session 통합·Handoff_v610 아카이브, 06-11)
+
+**16절 Decision Reversal Log — R6 추가**: "재논의 금지" 강제 절차(확정 결정 번복 시 16절 기록+CUE 승인 의무)는 **LLM 세션 간 메모리 오염으로 확정 결정이 반복 번복·재논의되던 문제를 막기 위한 임시 방어 조치**였음. 킵/고잉 프로토콜+푸시 트리거 규칙+혼동 사전이 그 역할을 대체하므로 **2026-06-11 해제**(CUE 승인). 과거 번복 이력 R1~R5는 사료로 보존. "재논의 금지" 표현은 "확정 — 변경 시 CUE 승인"으로 완화(HANDOFF 10.1·10.2·10.4 반영 완료).
 
 **테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota) / TO.1~9 신설(관측성·어댑터 metrics) / TS.1~16 신설(저장소·tenant 키·수평 전환 가드) / TD.1~15 신설(보존·삭제·롤오버·배치)
