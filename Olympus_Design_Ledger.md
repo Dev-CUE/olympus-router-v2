@@ -7,13 +7,13 @@
 
 > **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
 > **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8 확정 / 잔여: L21·L20·L17·L18·L22·L23·LB
+> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21 확정 / 잔여: L20·L17·L18·L22·L23·LB
 
 ---
 
 ## 0. 프로세스 규칙
 
-1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→**L21→L20** / [구조] **L17→L18→L19(완료)→L22→L23** / [최후] **LB**
+1. 설계 순서(의존성 기준): [기반] 1→2→3 / [A2A] 5→6→7→10 / [운영] 16→9→8→L21(완료)→**L20** / [구조] **L17→L18→L19(완료)→L22→L23** / [최후] **LB**
 2. 매 항목 종료 시 기존 킵 항목과 충돌 점검 의무. 충돌 시 즉시 앞 항목 수정 + 이력 기록.
 3. 보류 결정은 "결정 대기(P-prefix)" 섹션에 누적, 전 항목 완료 후 일괄 결정.
 4. PRD 반영 시 Changelog는 v6.13 단일 항목.
@@ -36,7 +36,6 @@
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L21** | 테넌트/에이전트별 rate limit·quota | 운영 |
 | **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 |
 | **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
 | **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
@@ -260,6 +259,38 @@ system:
 - **감사 연계**: write → #9 audit admin 이벤트
 - **테스트**: T9.8~12
 
+### [#L21] rate limit·quota — 유량 제어 계약 (확정)
+
+> 라우터 인입 경계의 유량 보호. **인프라 가용성 보호 장치**이지 보안 게이트가 아니다(인증 #2와 레이어 구분).
+
+- **제어 키 (D-L21-1 확정)**: **agent_id 단위만 L21에서 확정.** agent_id는 #2 토큰에서 도출되므로 위조 불가. **tenant_id 단위는 키 계약·범위 미확정(L18 소관) — 구조만 예약**, 수치는 L18 확정 후. tenant quota를 L21에서 정하면 L18 재작업 발생하므로 이관.
+- **알고리즘**: **token bucket**. 키당 (tokens, last_refill) 2값 — 경량. fixed window(경계 버스트 취약)·sliding log(메모리 비쌈) 기각. 근거: A2A DIALOGUE는 라운드 버스트성이라 고정 윈도우 부적합.
+- **rate limit vs quota 2층 분리**:
+  - **rate limit**: 초/분 순간 유량(버킷). 초과 시 `RATE_LIMITED` 429 + `Retry-After`.
+  - **quota**: 시간·일 누적 총량. 초과 시 `QUOTA_EXCEEDED` 429 + 리셋 시각. 윈도우 리셋까지 차단.
+- **quota 계량 단위 (D-L21-2 확정)**: **건수 기반.** 비용(OpenRouter 토큰 환산) 기반은 라우터가 모델 사용량을 해석해야 해 **Dumb Pipe 위반**이라 기각. 비용 기반은 에이전트/SDK 자체 보고 별도 레이어로 미룸(L21 비범위).
+- **cc(listen) 계상 (리스크5 확정)**: **rate limit은 cc 포함 적용**(인입은 인입). **quota 건수는 to만 카운트** — cc는 사용자 의도 1건의 부수효과라 중복 계상하지 않음.
+- **영속성**:
+  - rate limit 버킷 = **인메모리.** 재시작 시 버킷 가득 찬 상태로 복원(안전측, 유실 무해). 재시작 복구 트랜잭션 불포함.
+  - quota 카운터 = **영속**(#1/#6과 동일 SQLite `quota_usage` 테이블: key, window_start, count). 재시작에 0 리셋되면 한도 우회 가능 → 영속 필수. 단순 조회 테이블이라 복구 트랜잭션 회수 로직 불요.
+- **fail 모드 (D-L21-3 확정)**: **fail-open.** quota 카운터 저장소 장애 시 통과. 근거: 유량 제어는 **가용성** 보호라, 카운터 DB 장애가 전체 정지로 번지면 안 됨. **인증(#2)=보안=fail-closed / 유량(L21)=가용성=fail-open — 명문 구분**(표면 상충 아님).
+- **A2A 경로**: rate limit 걸리면 세션 중단이 아니라 **해당 호출만 429**. 재시도는 에이전트 SDK 백오프(G6)에 위임. A2A 내부 speaker_counts(10회, #6)는 "회의 독주 방지" 레이어, L21은 "인프라 유량 보호" 레이어 — **별개**(혼동 사전 박제).
+- **설정안**:
+```yaml
+system:
+  rate_limit:
+    enabled: true
+    default:
+      rate: { capacity: 60, refill_per_sec: 1 }   # 버킷 60, 초당 1 리필
+      quota: { window: "1d", max_requests: 10000 }
+    overrides:                                       # agent_id별 재정의
+      - agent_id: "zeus"
+        rate: { capacity: 120, refill_per_sec: 2 }
+    fail_mode: "open"                                # 카운터 장애 시 통과
+```
+- **신규 에러코드**: `RATE_LIMITED`(429+Retry-After), `QUOTA_EXCEEDED`(429+리셋시각)
+- **테스트 (TR 대역 신설)**: TR.1 버킷 소진 후 429 / TR.2 Retry-After 정확성 / TR.3 quota 윈도우 리셋 / TR.4 재시작 후 quota 카운터 유지(영속) / TR.5 fail-open 동작 / TR.6 override 적용 / TR.7 A2A 429가 세션 미파괴 / TR.8 cc는 rate limit 적용·quota 비계상
+
 ---
 
 ## 2. 결정 대기 (P-prefix)
@@ -316,6 +347,13 @@ system:
 | P46 | #8 | 세션 조회 | 메타만 |
 | P47 | #8 | yaml 쓰기 | API 우선+/admin/reload |
 | P48 | 재시작 | 어댑터 /ready 게이팅 | 채택 (ready 전 egress 503→#3 재시도) |
+| P49 | L21 | rate limit 알고리즘 | token bucket |
+| P50 | L21 | quota 계량 단위 | 건수 기반(비용 기각, Dumb Pipe) |
+| P51 | L21 | rate limit fail 모드 | fail-open (인증 closed와 구분) |
+| P52 | L21 | quota 카운터 영속 | SQLite quota_usage 테이블 |
+| P53 | L21 | cc quota 계상 | 비계상 (rate limit만 적용) |
+| P54 | L21 | tenant 단위 제어 | 구조 예약, 수치·키 L18 이관 |
+| P55 | L21 | 기본 한도값 | rate 60/리필1·quota 1d/10000 (override agent_id별) |
 
 ---
 
@@ -344,6 +382,11 @@ system:
 | 06-11 | 무단 푸시 | 재시작 보강이 CUE 승인 전 무단 푸시됨(이전 창) | 위반 기록. 내용은 합의안과 일치 → 롤백 없이 사후 추인(CUE 승인). 재발 방지로 Session_Protocol에 푸시 트리거 규칙 신설 |
 | 06-11 | G2 보강 | retention 종속 누락 | platform_message_id가 job retention 72h 종속(무한 누적 방지) 명문화. P48(어댑터 /ready) 신설 |
 | 06-11 | 문서구조 | 킵·핸드오프 규칙 PRD/원장 산재 | Session_Protocol.md 분리, 게이트 포인터 박제 |
+| 06-11 | L21 | #2 fail-closed vs L21 fail-open | 충돌 아님 — 인증=보안=closed / 유량=가용성=open 레이어 구분 명문화 |
+| 06-11 | L21 | #6 speaker_counts(10회) vs L21 rate limit | 충돌 아님 — 회의 독주 방지(A2A) vs 인프라 유량 보호(L21) 별 레이어. 혼동 사전 박제 |
+| 06-11 | L21 | quota 비용 기반 vs Dumb Pipe | 비용 계량 기각, 건수 기반 확정 |
+| 06-11 | L21 | tenant 제어 vs L18 미확정 | tenant 수치·키 L18 이관, L21은 agent_id만 확정 |
+| 06-11 | 테스트 ID | T10.x 연장 vs 신규 대역 | rate limit·quota는 독립 관심사 → TR 대역 신설. Session_Protocol 혼동 사전에 테스트 ID 체계 박제 |
 
 ---
 
@@ -355,18 +398,18 @@ system:
 
 **신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload
 
-**신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명)
+**신규 에러코드**: AUDIT_UNAVAILABLE, CC_RESPONSE_FORBIDDEN, A2A_INVALID_SESSION, A2A_NOT_PARTICIPANT, A2A_SESSION_EXPIRED, JOB_EXPIRED, JOB_DEAD_LETTER, UNAUTHORIZED(개명), RATE_LIMITED, QUOTA_EXCEEDED
 
-**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약
+**신설 절**: 재시작·복구 프로토콜 / 어댑터 계약(플랫폼별) / 전송 추상 계약 / rate limit·quota 계약(L21)
 
-**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin 블록
+**agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit 블록
 
 **4절 보강**: 4.2 태깅·합성 필터, 4.5 합성 규칙
 
-**9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율
+**9-A SDK 보강**: 재시도, 태깅, 합성 필터, Mem0 기록 규율, rate limit 429 백오프
 
-**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준
+**용어집**: resolved 내용 중립, job 상태 6종, 종료 마커 5종, SSE 이벤트 타입(job/listen), topic, parent_session_id, at-least-once 전달 보장 수준, rate limit/quota 구분, fail-open(유량) vs fail-closed(인증)
 
 **문서 구조**: Session_Protocol.md 신설(프로세스 분리) / PRD·원장·핸드오프 게이트 포인터 / PRD 목차 추가 / 물리 분할은 v6.13 시점 보류
 
-**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설
+**테스트 추가/갱신**: T5.11~12·T5.13~15·T5.17·T5.21~29 갱신 / T7.4~7.8 / T9.8~12 / T10.11~17·T10.18~39 신설 / TA.1~6 신설 / TR.1~8 신설(rate limit·quota)
