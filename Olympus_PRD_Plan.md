@@ -1,7 +1,14 @@
-> ⛔ **새 세션 필수 — 설계 착수 전 반드시 읽어라**
-> 1. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
-> 2. `Olympus_Design_Handoff_New_Session.md` (현재 위치 + 확정 요약)
-> 이 PRD만 읽고 설계에 착수하지 마라 = 프로토콜 위반. 진행 중 설계의 최신 상태는 원장(Ledger)에 있고, PRD 일괄 반영(v6.13)은 전 항목 완료 후 1회 수행한다.
+# ⛔ 아카이브 (ARCHIVED — 2026-06-11 증류)
+
+> **이 문서는 더 이상 SSOT가 아니다. 읽지 마라.**
+> - 설계 SSOT → [`Olympus_PRD.md`](Olympus_PRD.md) (v6.13 증류본)
+> - 구현 계획 → [`Olympus_Plan.md`](Olympus_Plan.md)
+> - 세션 진입점 → [`HANDOFF.md`](HANDOFF.md)
+>
+> 본 문서(구 PRD v6.12)는 **폐기된 설계를 현행처럼 서술한다**: 롱폴링(GET /poll), `_source_url` 스푸핑 검증, 라운드(round/max_rounds/ROUND_LIMIT), legacy session_id, 큐 휘발 허용 — 전부 v6.13에서 폐기·대체됨.
+> CUE의 사료(이력 추적)용으로만 보존한다. 변경 이력 v6.0~v6.12와 번복 기록 R1~R5는 이 파일과 git history가 담당한다.
+
+---
 
 # Olympus Router — PRD & Implementation Plan
 
@@ -9,9 +16,9 @@
 > **상태**: Phase 1~7 구현 완료 / 55/55 테스트 통과 / Phase 8~12 미구현
 > **다음 메이저**: v7.0은 Pull 통신모델이 코드로 실제 전환되는 시점(Phase 10 구현 착수)에 부여한다. v6.5~v6.10은 문서상 설계 변경이며 코드는 아직 옛 구조다.
 > **문서 성격**: AI 코딩 에이전트가 직접 소비하는 실행 계약서(Contract)
-> **업데이트 규칙**: 이 문서가 단일 진실 공급원(SSOT). 설계 변경 시 반드시 이 파일을 먼저 갱신한 뒤 코드를 수정한다.
+> **업데이트 규칙**: (구) 이 문서가 단일 진실 공급원(SSOT)이었다 — **현재는 Olympus_PRD.md로 이관됨.**
 
-> ⚠️ **v6.8 확정 결정 번복 고지**: 본 버전은 이전까지 "확정/재논의 금지"로 잠겨 있던 결정 5건을 의도적으로 번복한다. 상세는 16절 참조. 하위 문서(CLAUDE.md, SKILLS.md, Dev_Enhancement_Olympus.md)는 본 버전 확정 후 정합화 대상이다(미반영 상태이면 본 PRD가 우선한다).
+> ⚠️ **v6.8 확정 결정 번복 고지**: 본 버전은 이전까지 "확정/재논의 금지"로 잠겨 있던 결정 5건을 의도적으로 번복한다. 상세는 16절 참조.
 
 ---
 
@@ -174,9 +181,6 @@
 - **연속성의 전제**: 회의 결정이 Obsidian에 반영되어야 DM에서 읽는다. 반영은 4.3 트리거(폴링+마커)로 동작하며 **eventual**이다.
 - **판정 기준**: 개인/조직 분기는 `context_key`의 `space_type`이 `dm`인지 여부로 결정한다(어댑터가 이미 생성하는 값, 라우터는 매칭만 — Dumb Pipe 유지).
 - **DM에서 나온 조직급 결정**: 별도 승격 로직을 두지 않는다. 조직 결정은 조직 공간(그룹/회의)에서 내린다(의도적 단순화).
-
-### 4.5 한 줄 정의 (재확인)
-> **메시지는 방마다 격리, 에이전트는 어디서나 하나. DM은 사적(Mem0), 회의는 조직(Obsidian).**
 
 ---
 
@@ -738,8 +742,7 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | v6.10 | 상용화 골격 — 에이전트 SDK 계약(9-A, 규격만) / 멀티테넌시 키 확장 최소반영(9-B, tenant_id 자리만 예약·본격설계 아님) / 온보딩 흐름(9-C) / Phase 11(T11.1~T11.7) 추가. 원칙표에 Agent SDK Contract·Tenant-Ready Keys 추가. 에러코드에 UNKNOWN_JOB·UNAUTHORIZED_POLL 정합 / Admin에 토큰 재발급 엔드포인트 추가 |
 | v6.11 | Google A2A 표준 호환성 결정 사항 반영 — Olympus A2A(독자 규격)와 Google A2A(Linux Foundation 표준) 관계 명시. 외부 연동 시 호환 레이어 검토 보류. SDK 9-A에 Agent Card 확장 여지 명시. 14절 미결에 Google A2A 항목 추가. 토폴로지에 외부 연동 레이어 표시. 용어집에 Google A2A 항목 추가 |
 | v6.12 | **메모리 라이프사이클 확정** — DM=Mem0(사적 보좌, 적립 1:1 한정) / DM 외=Obsidian(조직 지식). 인격 자체는 공간 무관 Mem0 유지. 회의→Obsidian 반영 트리거 확정(폴링+resolved/out 마커, eventual). 4-A 절 신설. 6.4 기록 규칙을 공간별 분기로 변경(그룹/A2A 결론→Obsidian, T5.14 갱신 대상). Raw 드롭 DM 스킵. **보안감사 옵션 모듈(9-D) 계약 추가** — audit-sink(불변·무손실, Raw Sink와 구현 분리) / 정책 yaml(default-on opt-out, 1=감사·0=면제) / 관리자 전용 권한·메타감사 / Phase 12 신설. Gemini 트리거 미결 해소 |
-
-> **v6.13 (진행 중, 별도 작업)**: 원장(Olympus_Design_Ledger.md)에 누적된 설계 항목(SSE 전환, Job Queue 영속, 토큰 인증, A2A 신원·세션, audit-sink, 재시작·복구 프로토콜, Admin 등)을 전 항목 완료 후 1회 일괄 반영 예정. 그 전까지 진행 중 설계의 최신 상태는 원장이 SSOT 브릿지.
+| **v6.13** | **(이관)** 본 문서가 아니라 **Olympus_PRD.md(증류본)에 일괄 반영됨** — SSE 전환, Job Queue 영속, 토큰 인증·바인딩, A2A 세션 신뢰(ULID), 라운드 폐기, cc listen, audit 해시 체인, 재시작·복구, Admin, rate limit·quota, 관측성, 저장소 계층(better-sqlite3), tenant 항상 prefix, 수평 확장 계약, 보존·삭제 정책. R6(재논의 금지 절차 해제) 포함. 상세는 Olympus_PRD.md와 동결 원장 참조 |
 
 ---
 
@@ -765,24 +768,13 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 
 ## 15. 다음 액션
 
-> `[작업금지] 브리핑 → 수정 → 승인` 프로토콜 유지.
-
-1. **Phase 10** — Job Queue + poll/result 엔드포인트 + 등록 토큰 검증 구현 (착수 시 v7.0 부여)
-2. **Phase 8** — Agora session-store 포팅
-3. **Phase 9** — user_id 어댑터 추출 + Admin API
-4. **Raw 백엔드** — SqliteSink 구현 (T7.5/T7.6), node:sqlite 가용성 확인
-5. **VPS Docker 이전** — Dockerfile + docker-compose (라우터+어댑터)
-6. **보안 [구현필요]** — 토큰↔agent_id 바인딩, job_id 대조, DoS 상한, Admin 인증
-7. **Phase 11** — 에이전트 SDK + 온보딩 (실구현·보안 이후)
-8. **Phase 12** — 보안감사 모듈 (audit-sink + 배치 감사 + 보고서, B2B 옵션)
-9. **실연동 검증** — 실제 에이전트 1기 폴링 왕복 (T10.10)
-10. **Google A2A 호환 레이어** — 외부 에이전트 연동 필요 시 재검토 (보류)
+> (구) — 현행 다음 액션은 HANDOFF.md / Olympus_Plan.md 참조.
 
 ---
 
 ## 16. v6.8 확정 결정 번복 기록 (Decision Reversal Log)
 
-이전까지 "확정/재논의 금지/핵심 제약"으로 잠겨 있던 결정 5건을 본 버전에서 의도적으로 번복한다.
+이전까지 "확정/재논의 금지/핵심 제약"으로 잠겨 있던 결정 5건을 v6.8에서 의도적으로 번복했다.
 
 | # | 기존 확정 결정 | v6.8 번복 후 | 사유 |
 |---|------|------|------|
@@ -791,5 +783,6 @@ Phase 1~7 및 E2E E1~E8 전체 통과 (55/55).
 | R3 | Stateless Ultra-Thin Core — 코어 상태 0% | Thin Core with Job Queue — 일감 큐(단기 상태) 허용 | pull 모델은 큐 보유 불가피. 파싱·LLM 금지는 유지 |
 | R4 | Hera는 SSH 터널(port 9002)로 연결 | SSH 폐기, 모든 에이전트 outbound 롱폴링으로 통일 | SSH는 사전 키 교환 필요, 외부·무설정 전제에 부적합 |
 | R5 | 응답 귀환은 callback 서버(8798) 방식 | `/result` 단일 경로로 통일, 8798 폐기 | 에이전트가 라우터 URL 하나만 알면 되도록 |
+| **R6** | "재논의 금지" 강제 절차 (확정 번복 시 16절 기록 + CUE 승인 의무) | **2026-06-11 해제** — 킵/고잉 프로토콜 + 푸시 트리거 규칙 + 혼동 사전이 역할을 대체. "재논의 금지" 표현은 "확정 — 변경 시 CUE 승인"으로 완화 | LLM 세션 간 메모리 오염으로 확정 결정이 반복 번복되던 문제의 임시 방어 조치였음. R1~R5는 사료로 보존 |
 
-> 본 번복은 운영자(CUE) 승인 하에 이루어졌다. 하위 문서가 아직 기존 기술을 담고 있으면 본 PRD가 우선한다.
+> 본 번복들은 운영자(CUE) 승인 하에 이루어졌다.
