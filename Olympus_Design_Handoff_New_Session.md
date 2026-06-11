@@ -12,20 +12,58 @@
 GitHub Dev-CUE/olympus-router-v2 master에서
 Olympus_Design_Ledger.md와 Olympus_PRD_Plan.md를 읽어라.
 
-원장의 프로세스 규칙을 따르고,
-잔여 항목 21번부터 설계를 이어간다.
+원장의 프로세스 규칙과 아래 킵 프로토콜을 따르고,
+잔여 항목 L21부터 설계를 이어간다.
 ```
 
 ---
 
-## 컨텍스트 요약
+## 킵(KIP) & 고잉 프로토콜 (필수 준수)
 
-**프로젝트**: Olympus Router v2 — AI 에이전트 조직 운영 인프라
-- MVP(v1) 운영 완료 → 상용서비스 기준으로 v2 업그레이드 설계 중
-- 에이전트 3기(Zeus/Hera/Athena), Telegram 기반, VPS Docker
-- PRD v6.12 문서 결함 11건·코드 결함 12건·아키텍처 지적 → v6.13 반영 설계
+> 이 프로토콜을 위반하는 것은 원칙 위반이다. 브리핑 없이 진행하지 않는다.
 
-**설계 세션 규칙**:
+### 단계
+
+```
+1. 브리핑    현재 L-번호 항목의 설계안을 출력한다.
+             코드·문서·원장 수정 없음. 출력만.
+
+2. 승인      CUE가 "킵" 또는 "킵하고 다음"이라고 답한다.
+             승인 없이 다음 단계로 가지 않는다.
+
+3. 원장 갱신 GitHub MCP로 Olympus_Design_Ledger.md를 직접 수정·푸시한다.
+             (Dev-CUE 계정 쓰기 권한 보유 — 직접 푸시 가능)
+             갱신 내용: 확정 결정 추가 / 결정 대기 추가 / 충돌 점검 / PRD 반영 메모
+
+4. 다음 항목 원장 푸시 완료 확인 후 다음 L-번호 브리핑으로 넘어간다.
+```
+
+### 절대 금지
+
+- CUE 승인 없이 다음 항목 진행
+- 브리핑 없이 설계 확정 선언
+- 원장 갱신 없이 "킵 완료" 선언
+- 승인 없이 원장·PRD·코드 수정
+
+### GitHub 원장 갱신 방법
+
+```javascript
+// 파일 SHA 먼저 조회
+github:get_file_contents({ owner: "Dev-CUE", repo: "olympus-router-v2",
+  path: "Olympus_Design_Ledger.md", branch: "master" })
+
+// SHA 받아서 업데이트
+github:create_or_update_file({ owner: "Dev-CUE", repo: "olympus-router-v2",
+  path: "Olympus_Design_Ledger.md", branch: "master",
+  sha: "<조회한 SHA>",
+  message: "docs: confirm L번호 — 항목명",
+  content: "<전체 파일 내용>" })
+```
+
+---
+
+## 설계 세션 규칙
+
 - 브리핑 없이 코드/문서 생성 금지
 - 추측 시 추측임을 명시
 - 아부 금지, 팩트 우선
@@ -36,8 +74,8 @@ Olympus_Design_Ledger.md와 Olympus_PRD_Plan.md를 읽어라.
 
 ## 확정된 설계 요약 (원장 상세 참조)
 
-| # | 항목 | 핵심 결정 요약 |
-|---|------|--------------|
+| L# | 항목 | 핵심 결정 요약 |
+|----|------|--------------| 
 | 15 | 전송 계층 | SSE+POST. WS·롱폴링 기각 |
 | 1 | Job Queue | 상태 6종, SQLite 영속, T10.6 폐기 |
 | 2 | 인증 | opaque 256-bit, 해시 저장, fail-closed, grace 24h |
@@ -48,47 +86,42 @@ Olympus_Design_Ledger.md와 Olympus_PRD_Plan.md를 읽어라.
 | 10 | 미기록 | persona_key 전 라운드 null, 종료 마커 5종, 미결 안건 기록 |
 | 16 | SLA+재개 | 마커 60초, 후속 세션+parent_session_id(재오픈 기각) |
 | 9+19 | audit | fail-closed, RawSink/AuditSink 분리, 해시 체인, audit.db |
-| 재시작 | 복구 프로토콜 | 불변식 유실 0·중복 0·수동 0. G1~G9 해소 |
+| 재시작 | 복구 프로토콜 | 불변식 유실 0·중복 0·수동 0. G1~G9 해소. at-least-once 명문화 |
 | 8 | Admin | 127.0.0.1 기본, scope read/write, CLI 부트스트랩 |
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
 
 ---
 
-## 잔여 설계 항목 (순서대로)
+## 잔여 설계 항목 (L-prefix 순서대로)
 
-### 운영 군
-**21번. 테넌트/에이전트별 rate limit·quota**
-- noisy neighbor 방지, 상용 테넌트 격리
-- quota 단위(에이전트별·테넌트별), 초과 동작(429·큐잉), 설정 위치
+| 항목 | 내용 | 분류 |
+|------|------|------|
+| **L21** | 테넌트/에이전트별 rate limit·quota | 운영 |
+| **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 |
+| **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
+| **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
+| **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
+| **L23** | 데이터 보존·삭제 정책 | 구조 |
+| **LB** | B군 모순 해소 4건 일괄 | 최후 |
 
-**20번. SLO·관측성**
-- 가용성·지연 목표, 지표 정의, 알람
-- worker_lag·audit_write_failures·pending_markers 등 이미 예약된 지표 수집 위치
-- 알람 채널(Telegram escalation 연계)
+**LB 상세**:
+- LB-11: Phase 의존성 재정렬
+- LB-12: A2A limits 충돌 확정 ("무시"로 방향 제시됨)
+- LB-13: resolved '최우선' 서술 분리
+- LB-14: 편집 오류 일괄
 
-### 구조 군
-**17번. SQLite 구현 규약**
-- WAL 모드, journal_mode, busy_timeout
-- DB 파일 분리 규칙(queue.db·audit.db·tokens.db 또는 통합)
+> LB-11~14는 통합 리뷰 D군 문서 결함 번호. PRD 절 번호 아님.
 
-**18번. tenant_id 구체화**
-- 키 생성 함수 시그니처(`tenant_id=null`)
-- 테넌시 영향 범위(큐·세션·레지스트리)
+---
 
-**22번. 수평 확장 경로**
-- 단일 인스턴스 한계 수치 명시
-- 전환 전제조건(SQLite→외부DB, SSE 레지스트리 공유)
-- 현 설계 변경 없이 수직 확장 한계
+## 번호 체계
 
-**23번. 데이터 보존·삭제 정책**
-- Raw/audit/세션/큐 retention
-- 테넌트 데이터 삭제 요청 처리
+| 체계 | 형식 | 의미 |
+|------|------|------|
+| 설계 항목 | `L숫자`, `LB` | 이번 세션 작업 단위 |
+| 결정 대기 | `P숫자` | 설계 완료 후 일괄 확정할 보류 결정 |
 
-### B군 (최후 — 모순 해소)
-- **11번**: Phase 의존성 재정렬 (Stage-Gated vs 10→8→9)
-- **12번**: A2A limits 충돌 확정 — 원장에서 "무시"로 방향 제시됨, 최종 확인
-- **13번**: resolved '최우선' 서술 분리 (종료 트리거 우선순위 ≠ 가드 검증 순서)
-- **14번**: 편집 오류 일괄 (4.5 중복, session_id platform 중복, 14절 미결 표, Phase 8 테스트 ID)
+**L21 ≠ P21** — 혼동 금지
 
 ---
 
@@ -100,6 +133,6 @@ Olympus_Design_Ledger.md와 Olympus_PRD_Plan.md를 읽어라.
 
 ## 이전 세션 참조
 
-이전 세션(이 창)은 컨텍스트 보존용으로 유지.
+이전 세션은 컨텍스트 보존용으로 유지.
 새 세션에서 판단이 어려운 경우 이전 세션에서 확인 가능.
 단 이전 세션에서 추가 설계 작업은 하지 않음.
