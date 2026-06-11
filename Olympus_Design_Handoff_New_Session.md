@@ -13,12 +13,12 @@
 
 ## 📍 현재 위치 (다음 세션은 여기부터)
 
-- **마지막 확정**: **L20 (SLO·관측성) 확정 완료** (원장 [#L20] 절 + P56~P62).
-  - 지표: /metrics(Prometheus)+/metrics.json API 노출, 라우터 내장 대시보드 기각, 향후 외부 대시보드 연결용 / 127.0.0.1 비공개 기본 / 4 골든 시그널 / SLO 자리표시자(가용성 99.5%·p95<2s, 실측 후 재조정) / **알람 = Admin UI 설정→yaml→관측 워커 판정·Telegram 발신**(라우터 직접 호출 금지, 원칙 6) / **시스템 로그 일단위 롤링 system-YYYYMMDD.log**(retention은 L23 이관) / TO.1~8 테스트 대역 신설
-  - 회수: #3/P13 egress 영구 실패 알림·#16 Obsidian SLA 위반 알람 → L20 알람 트리거로 확정
-- **다음 항목**: **L17** (SQLite 구현 규약 — WAL·파일 분리) 브리핑.
+- **마지막 확정**: **L17 (운영 저장소 계층 규약) 확정 완료** (원장 [#L17] 절 + P63~P67).
+  - 갈래 C 채택: 운영 DB를 **단일 저장소 인터페이스**로 추상화(Raw-sink 패턴 확대), SQLite 1차·PostgreSQL 전환 대상 / WAL 모드 전 운영 DB(-wal·-shm 3파일 묶음) / 단일 writer 큐 + busy_timeout 병행 / 파일 분리(queue.db 단일 운영 + audit.db + raw.db 옵션) / user_version 마이그레이션 게이트 / **DB 라이브러리 better-sqlite3 채택**(PRD 9절 "node:sqlite 내장 우선" 변경, CUE 승인 — node:sqlite RC지만 experimental·busy_timeout 기본0) / TS.1~8 테스트 대역 신설
+  - **계층 2(대고객 서비스 DB) = 서브프로젝트로 분리, 이번 비범위.** 회원·가입·구독·결제·테넌트 = PostgreSQL급 별도 DB, 라우터와 격리(원칙 6). 코어 검증 우선, 확장 메모만. L24 별도 항목 미생성(CUE 결정).
+- **다음 항목**: **L18** (tenant_id 구체화 — 키 계약·범위) 브리핑.
 - **진행 중 미확정**: 없음.
-- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/TO/T10/TA/T5/T7/T9).
+- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/TO/TS/T10/TA/T5/T7/T9).
 - **남은 문서 작업**: PRD 목차(인덱스) 추가 — 미착수. 물리 분할은 v6.13 일괄 반영 시점으로 보류.
 
 ---
@@ -59,6 +59,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
 | 21 | rate limit·quota | agent_id 단위(tenant L18 이관), token bucket, quota 건수 기반, cc 비계상, fail-open, TR 대역 |
 | 20 | SLO·관측성 | metrics API(/metrics+json) 노출, 알람 Admin UI 설정→관측 워커 발신, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
+| 17 | 운영 저장소 계층 | 저장소 추상화(C, SQLite→PG 전환), WAL, 단일 writer 큐+busy_timeout, queue.db 단일+audit/raw 분리, better-sqlite3(내장우선 변경), 계층2 서브프로젝트, TS 대역 |
 
 ---
 
@@ -66,8 +67,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 ← **다음** |
-| **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
+| **L18** | tenant_id 구체화 (키 계약·범위) | 구조 ← **다음** |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
 | **LB** | B군 모순 해소 4건 일괄 | 최후 |
@@ -80,7 +80,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 > LB-11~14는 통합 리뷰 D군 문서 결함 번호. PRD 절 번호 아님.
 
-> **L23 주의**: L20에서 시스템 로그 retention을 L23로 이관함(P62). L23 설계 시 회수할 것.
+> **L18 주의 (선행 이관 회수)**: L21이 tenant 단위 rate limit·quota를 "구조 예약, 수치·키 L18 이관"(P54)했음. L18에서 tenant_id 키 계약 확정 시 L21 tenant 적용분을 회수해 정합할 것.
+> **L22 주의**: L17 PostgreSQL 전환, L20 시스템 로그 retention은 각각 L22·L23로 이관됨.
+> **L23 주의**: L20 시스템 로그 retention(P62) + L17 WAL 3파일 백업 단위가 L23로 이관됨.
 
 ---
 
@@ -95,9 +97,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 ---
 
-## 결정 대기 P1~P62
+## 결정 대기 P1~P67
 
-원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20)
+원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20, P63~P67=L17)
 
 ---
 
