@@ -13,9 +13,14 @@
 
 ## 📍 현재 위치 (다음 세션은 여기부터)
 
-- **마지막 확정**: **L18 (tenant_id 키 계약) 확정 완료** (원장 [#L18] 절 + P68~P71, P54 회수).
-  - **v1 호환 불필요(CUE 확정 — v1 미사용)** → 항상 prefix 방식 채택 / 키: `{tenant_id}:{platform}:...`·`{tenant_id}:{agent_id}`·session_id 접두, **단일 테넌트 기본값 `default`**(조건 분기 없음) / **범위 = 키 계약만**(발급·인증·바인딩은 대고객 서브프로젝트) / tenant_id 출처 현 단계 default 고정, 향후 토큰 도출 / **persona는 tenant 격리(`{tenant}:{agent}`)·플랫폼 초월 — 다른 축**(충돌 아님) / L21 tenant override 회수(P54 해소) / TS.9~14 테스트
-- **다음 항목**: **L22** (수평 확장 경로 — 전환 전제조건 계약) 브리핑.
+- **마지막 확정**: **L22 (수평 확장 경로) 확정 완료** (원장 [#L22] 절 + P72~P76, L20 어댑터 지표 보강).
+  - **수평 확장 구현 안 함** — 단일 라우터+수직 확장 우선(SPOF 수용=SLO 99.5% 전제). L22는 전환 전제조건 체크리스트+전환 신호만 계약화.
+  - **전제조건 체크리스트(D-L22-1)**: 상태 공유(PostgreSQL 전환)·SSE 연결 고정·writer 직렬화→DB MVCC·세션 SSOT 공유·dedup 공유·L21 인메모리 버킷 공유화. 구현 비범위.
+  - **샤딩 축(D-L22-2)**: tenant_id 1순위(L18 키 구조 지원).
+  - **스케일업 판단 지표(CUE 지적 반영)**: L20 지표 재사용(신규 모니터링 안 만듦), 라우터+어댑터 지속 포화 시 전환 신호. **어댑터도 /metrics 자체 노출**(L20 보강, TO.9). 관측 워커가 라우터·어댑터 함께 수집.
+  - **L21 인메모리 버킷(D-L22-3)**: 다중 라우터 시 라우터별 한도 분산 → 공유 버킷 필요(전제조건 명시).
+  - 테스트: TS.15~16(저장소 경유 가드)·TO.9(어댑터 metrics).
+- **다음 항목**: **L23** (데이터 보존·삭제 정책) 브리핑.
 - **진행 중 미확정**: 없음.
 - **문서 구조 작업 완료**: Session_Protocol.md 신설 / 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전(TR/TO/TS/T10/TA/T5/T7/T9).
 - **남은 문서 작업**: PRD 목차(인덱스) 추가 — 미착수. 물리 분할은 v6.13 일괄 반영 시점으로 보류.
@@ -57,9 +62,10 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 8 | Admin | 127.0.0.1 기본, scope read/write, CLI 부트스트랩 |
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
 | 21 | rate limit·quota | agent_id 단위, token bucket, quota 건수 기반, cc 비계상, fail-open, {tenant}:{agent} override, TR 대역 |
-| 20 | SLO·관측성 | metrics API(/metrics+json), 알람 Admin UI→관측 워커, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
+| 20 | SLO·관측성 | metrics API(/metrics+json, 라우터·어댑터 공통), 알람 Admin UI→관측 워커, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
 | 17 | 운영 저장소 계층 | 저장소 추상화(C, SQLite→PG), WAL, 단일 writer 큐+busy_timeout, queue.db 단일+audit/raw, better-sqlite3, 계층2 서브프로젝트, TS 대역 |
 | 18 | tenant 키 계약 | 항상 prefix(단일 default), v1 호환 불필요, 키 계약만(발급은 서브프로젝트), persona tenant 격리·플랫폼 초월(다른 축), P54 회수, TS.9~14 |
+| 22 | 수평 확장 경로 | 구현 안 함(단일 라우터+수직, SPOF 수용). 전제조건 체크리스트+전환 신호. tenant_id 1순위 샤딩. 스케일업 판단=L20 지표(라우터+어댑터). 어댑터 /metrics 보강. TS.15~16·TO.9 |
 
 ---
 
@@ -67,8 +73,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 ← **다음** |
-| **L23** | 데이터 보존·삭제 정책 | 구조 |
+| **L23** | 데이터 보존·삭제 정책 | 구조 ← **다음** |
 | **LB** | B군 모순 해소 4건 일괄 | 최후 |
 
 **LB 상세**:
@@ -79,8 +84,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 > LB-11~14는 통합 리뷰 D군 문서 결함 번호. PRD 절 번호 아님.
 
-> **L22 회수 대상**: L17 PostgreSQL 전환(저장소 인터페이스, 트랜잭션 격리 차이) / 재시작 G레지스터 "L22 선결정(단일 라우터 수직 확장 우선, 수평 전제조건 L22)" / L18 tenant_id 샤딩 후보 키.
-> **L23 회수 대상**: L20 시스템 로그 retention(P62) / L17 WAL 3파일(-wal·-shm) 백업 단위 / job completed_retention_h(#1) 정합.
+> **L23 회수 대상**: L20 시스템 로그 retention(P62) / L17 WAL 3파일(-wal·-shm) 백업 단위 / job completed_retention_h 72h(#1) 정합 / audit.db 해시 체인 보존(컴플라이언스, 삭제 주의) / quota_usage·세션·Mem0/Obsidian 데이터 보존 주기 / tenant 삭제 시 연쇄 삭제(L18 키 prefix 기준).
 
 ---
 
@@ -95,9 +99,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 ---
 
-## 결정 대기 P1~P71
+## 결정 대기 P1~P76
 
-원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20, P63~P67=L17, P68~P71=L18)
+원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20, P63~P67=L17, P68~P71=L18, P72~P76=L22)
 
 ---
 
