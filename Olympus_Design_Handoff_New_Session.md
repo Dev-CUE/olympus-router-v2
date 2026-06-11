@@ -13,11 +13,12 @@
 
 ## 📍 현재 위치 (다음 세션은 여기부터)
 
-- **마지막 확정**: **L21 (테넌트/에이전트별 rate limit·quota) 확정 완료** (원장 [#L21] 절 + P49~P55).
-  - agent_id 단위만 확정(tenant는 L18 이관) / token bucket / rate limit·quota 2층 분리 / quota 건수 기반(비용 기각=Dumb Pipe) / cc는 rate limit 적용·quota 비계상 / quota 카운터 SQLite 영속 / fail-open(인증 #2 fail-closed와 레이어 구분) / 신규 에러코드 RATE_LIMITED·QUOTA_EXCEEDED / TR.1~8 테스트 대역 신설
-- **다음 항목**: **L20** (SLO·관측성 — 지표·알람·SLO 수치) 브리핑.
+- **마지막 확정**: **L20 (SLO·관측성) 확정 완료** (원장 [#L20] 절 + P56~P62).
+  - 지표: /metrics(Prometheus)+/metrics.json API 노출, 라우터 내장 대시보드 기각, 향후 외부 대시보드 연결용 / 127.0.0.1 비공개 기본 / 4 골든 시그널 / SLO 자리표시자(가용성 99.5%·p95<2s, 실측 후 재조정) / **알람 = Admin UI 설정→yaml→관측 워커 판정·Telegram 발신**(라우터 직접 호출 금지, 원칙 6) / **시스템 로그 일단위 롤링 system-YYYYMMDD.log**(retention은 L23 이관) / TO.1~8 테스트 대역 신설
+  - 회수: #3/P13 egress 영구 실패 알림·#16 Obsidian SLA 위반 알람 → L20 알람 트리거로 확정
+- **다음 항목**: **L17** (SQLite 구현 규약 — WAL·파일 분리) 브리핑.
 - **진행 중 미확정**: 없음.
-- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/T10/TA/T5/T7).
+- **문서 구조 작업 완료**: Session_Protocol.md 신설 / PRD·원장·핸드오프 게이트 포인터 / 푸시 트리거 규칙 / 테스트 ID 체계 혼동 사전 박제(TR/TO/T10/TA/T5/T7/T9).
 - **남은 문서 작업**: PRD 목차(인덱스) 추가 — 미착수. 물리 분할은 v6.13 일괄 반영 시점으로 보류.
 
 ---
@@ -57,6 +58,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 | 8 | Admin | 127.0.0.1 기본, scope read/write, CLI 부트스트랩 |
 | 4.2 | 메모리 태깅 | Mem0 metadata user_id 태깅, 합성 필터 |
 | 21 | rate limit·quota | agent_id 단위(tenant L18 이관), token bucket, quota 건수 기반, cc 비계상, fail-open, TR 대역 |
+| 20 | SLO·관측성 | metrics API(/metrics+json) 노출, 알람 Admin UI 설정→관측 워커 발신, 시스템 로그 일단위 롤링, SLO 자리표시자, TO 대역 |
 
 ---
 
@@ -64,8 +66,7 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 | 항목 | 내용 | 분류 |
 |------|------|------|
-| **L20** | SLO·관측성 (지표·알람·SLO 수치) | 운영 ← **다음** |
-| **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 |
+| **L17** | SQLite 구현 규약 (WAL·파일 분리) | 구조 ← **다음** |
 | **L18** | tenant_id 구체화 (키 계약·범위) | 구조 |
 | **L22** | 수평 확장 경로 (전환 전제조건 계약) | 구조 |
 | **L23** | 데이터 보존·삭제 정책 | 구조 |
@@ -78,6 +79,8 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 - LB-14: 편집 오류 일괄
 
 > LB-11~14는 통합 리뷰 D군 문서 결함 번호. PRD 절 번호 아님.
+
+> **L23 주의**: L20에서 시스템 로그 retention을 L23로 이관함(P62). L23 설계 시 회수할 것.
 
 ---
 
@@ -92,9 +95,9 @@ GitHub Dev-CUE/olympus-router-v2 master에서 아래 순서로 읽어라:
 
 ---
 
-## 결정 대기 P1~P55
+## 결정 대기 P1~P62
 
-원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55 = L21 rate limit·quota 보류 결정)
+원장 2절 참조. 전 항목 설계 완료 후 일괄 결정. (P49~P55=L21, P56~P62=L20)
 
 ---
 
