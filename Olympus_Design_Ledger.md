@@ -1,14 +1,19 @@
-> ⛔ **새 세션 필수 — 설계 착수 전 반드시 읽어라**
-> 1. `HANDOFF.md` (단일 진입점 — 현재 위치·역할·다음·문서 지도)
-> 2. `Olympus_Session_Protocol.md` (킵 프로토콜 + 핸드오프 규칙 + 혼동 사전 + 푸시 트리거 규칙)
-> 이 원장만 읽고 설계에 착수하지 마라 = 프로토콜 위반. SSOT 우선순위: PRD > 이 원장 > 핸드오프(HANDOFF.md).
-> ※ 진입점 일원화(06-11): 과거 `Olympus_Design_Handoff_New_Session.md`는 HANDOFF.md로 통합됨.
+# ⛔ 동결 (FROZEN — 2026-06-11 증류)
 
-# Olympus v6.13 설계 원장 (Design Ledger)
+> **이 원장은 역할을 마쳤다. 읽지 마라.**
+> - 전 확정 항목(L15~L23 + LB)은 [`Olympus_PRD.md`](Olympus_PRD.md)(v6.13 증류본)에 **흡수 완료**됐다.
+> - P1~P88 결정 대기 표도 전부 본문에 흡수됐다.
+> - 이후 설계 변경은 원장을 경유하지 않는다 — 브리핑 → CUE "킵" → **PRD 직접 갱신**.
+> - 진입점은 [`HANDOFF.md`](HANDOFF.md), 방법은 [`Olympus_Session_Protocol.md`](Olympus_Session_Protocol.md).
+>
+> 이 파일은 CUE의 사료(검토 경로·충돌 점검 로그·결정 대기 이력)로만 보존한다.
 
-> **성격**: PRD v6.13 일괄 반영 전까지의 작업용 원장. SSOT는 여전히 PRD — 이 문서는 세션 유실 방지용 브릿지.
-> **규칙**: 항목 확정 시 이 문서에만 누적. PRD는 전 항목 완료 후 1회 일괄 갱신(v6.13).
-> **갱신**: 2026-06-11 | 진행: A2A군 + 16·재개·9(+19)·재시작(보강)·8·L21·L20·L17·L18·L22·L23·LB 확정 / 잔여: 없음 → PRD 일괄 반영 대기
+---
+
+# Olympus v6.13 설계 원장 (Design Ledger) — 동결본
+
+> **성격**: (구) PRD v6.13 일괄 반영 전까지의 작업용 원장. **반영 완료로 동결.**
+> **갱신**: 2026-06-11 | 진행: 전 항목 확정 → **Olympus_PRD.md로 흡수 완료**
 
 ---
 
@@ -35,7 +40,7 @@
 
 ### 잔여 설계 항목
 
-**없음. 전 항목(L15~L23 + LB) 확정 완료. 다음 작업 = v6.13 PRD 일괄 반영.**
+**없음. 전 항목(L15~L23 + LB) 확정 완료. → Olympus_PRD.md 반영 완료(동결).**
 
 ---
 
@@ -437,9 +442,9 @@ system:
 
 ---
 
-## 2. 결정 대기 (P-prefix)
+## 2. 결정 대기 (P-prefix) — 전부 PRD 흡수 완료
 
-> P숫자는 설계 완료 후 일괄 확정할 보류 결정. L(설계 항목)과 다른 체계다.
+> P숫자는 설계 완료 후 일괄 확정할 보류 결정이었다. **전 항목이 Olympus_PRD.md 본문에 흡수되어 역할 종료.**
 
 | P# | 출처 | 결정 사항 | 권고 |
 |----|------|----------|------|
@@ -496,7 +501,7 @@ system:
 | P51 | L21 | rate limit fail 모드 | fail-open (인증 closed와 구분) |
 | P52 | L21 | quota 카운터 영속 | SQLite quota_usage 테이블 |
 | P53 | L21 | cc quota 계상 | 비계상 (rate limit만 적용) |
-| P54 | L21 | tenant 단위 제어 | **L18에서 회수·해소** — {tenant}:{agent} 키 override로 적용 |
+| P54 | L21 | tenant 단위 제어 | L18에서 회수·해소 — {tenant}:{agent} 키 override로 적용 |
 | P55 | L21 | 기본 한도값 | rate 60/리필1·quota 1d/10000 (override agent_id별) |
 | P56 | L20 | 지표 노출 형태 | /metrics(Prometheus) + /metrics.json 병행, 라우터 내장 대시보드 기각 |
 | P57 | L20 | 지표 바인딩 | 127.0.0.1 기본 비공개(admin 동일) |
@@ -504,7 +509,7 @@ system:
 | P59 | L20 | 알람 관리 | Admin UI 설정→yaml→관측 워커 판정·Telegram 발신 |
 | P60 | L20 | 알람 발신 주체 | 별도 관측 워커(라우터 직접 호출 금지, 원칙 6) |
 | P61 | L20 | 시스템 로그 파일 규칙 | 일단위 롤링 system-YYYYMMDD.log |
-| P62 | L20 | 시스템 로그 retention | **L23에서 회수·확정** — 월파일 단위 30일(자리표시자) |
+| P62 | L20 | 시스템 로그 retention | L23에서 회수·확정 — 월파일 단위 30일(자리표시자) |
 | P63 | L17 | 저장소 추상화 | 단일 인터페이스, SQLite 1차·PostgreSQL 전환 대상(갈래 C) |
 | P64 | L17 | WAL 모드 | 전 운영 DB 적용 (-wal·-shm 동반, 3파일 한 묶음) |
 | P65 | L17 | 동시 쓰기 | 단일 writer 큐 + busy_timeout 병행 |
@@ -574,11 +579,13 @@ system:
 
 ---
 
-## 4. PRD 반영 대기 메모
+## 4. PRD 반영 대기 메모 — ✅ 반영 완료 (2026-06-11)
+
+> 아래 메모는 전부 **Olympus_PRD.md(증류본) + Olympus_Plan.md에 반영 완료**됐다. 사료로만 보존.
 
 **교체/재작성**: 7.2(SSE), 6.3(세션), 6.5(가드 — 라운드 삭제·resolved/가드순서 분리), 8절(Admin), 9-D(audit), 9-A(SDK), 9절(DB 라이브러리 better-sqlite3로 변경), 9-B(tenant 키 항상 prefix·default 구체화)
 
-**삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL, **round 필드(sessions)**, **max_rounds 설정**, **A2A_ROUND_LIMIT_EXCEEDED 에러코드**, **T5.4**, **PRD 6절 라운드 서술 전체**
+**삭제**: GET /poll, _source_url, url 필드, legacy session_id, T10.6 휘발, UNAUTHORIZED_POLL, round 필드(sessions), max_rounds 설정, A2A_ROUND_LIMIT_EXCEEDED 에러코드, T5.4, PRD 6절 라운드 서술 전체
 
 **신규 엔드포인트**: GET /agents/:id/events, POST /agents/:id/a2a, GET /health, GET /ready(라우터·어댑터), POST /admin/reload, GET /metrics, GET /metrics.json (라우터·어댑터 공통)
 
@@ -588,19 +595,10 @@ system:
 
 **agents.yaml 추가**: system.queue, system.egress, system.audit, system.admin, system.rate_limit, system.observability 블록 / system.tenant / system.rollover / system.retention
 
-**A2A 계약 변경 (LB-12·13)**:
-- sessions 레코드에서 round 필드 삭제
-- speaker_counts SSOT = DB. 에이전트 제출값 무시 명문화
-- 종료 마커 4종(round_limit 제거): resolved|out|speaker_limit|expired
-- 가드 순서 6단계(라운드 한도 체크 제거)
-- 종료 사유 판정: resolved > speaker_limit
+**A2A 계약 변경 (LB-12·13)**: sessions 레코드에서 round 필드 삭제 / speaker_counts SSOT = DB, 에이전트 제출값 무시 / 종료 마커 4종 / 가드 6단계 / 종료 사유 resolved > speaker_limit
 
-**편집 오류 정정 (LB-14)**:
-- PRD 4.5 합성 규칙 중복 제거
-- session_id 서술 내 platform 필드 중복 정리
-- PRD 14절 미결 표 해소 항목 제거
-- Phase 8 테스트 ID → T9 대역으로 정정
+**편집 오류 정정 (LB-14)**: PRD 4.5 중복 제거 / session_id platform 중복 정리 / 미결 표 해소 항목 제거 / Phase 8 테스트 ID → T9 대역 정정
 
-**LB-11 Phase 의존성 재정렬**: Stage-Gated 원칙 "번호 순서" → "의존성 기준 순서". Phase 10 선행 명문화.
+**LB-11**: Stage-Gated "번호 순서" → "의존성 기준 순서" (Plan G-A~G-J 게이트로 구체화)
 
-**테스트 추가/갱신**: (기존 항목 유지) + T5.4 삭제 / T5.6 재기술(resolved가 speaker 에러보다 정상종료 우선 반환, 가드 5번 자리) / T5.13~14 갱신(round_limit 제거) / sessions 스키마 테스트 round 필드 제거
+**테스트**: T5.4 삭제 / T5.6 재기술 / T5.13~14 갱신 / sessions 스키마 round 제거 — Plan 3절 반영 완료
