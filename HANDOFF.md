@@ -1,7 +1,7 @@
 # HANDOFF.md — Olympus Router 상시 진입점
 
 > **새 세션은 무조건 이 파일을 먼저 읽는다.** 작업 진행마다 최신으로 덮어쓴다.
-> 최종 갱신: 2026-06-12 | **현재 단계: UI·대고객 계층 설계 확정(Service_Layer v1.0) 완료 — 다음 = CUE 지정 대기 (후보: 구현 헌법 정합화 또는 백업·RPO/RTO 설계)**
+> 최종 갱신: 2026-06-12 | **현재 단계: 대고객 계층 설계 + 보안 검토 완료 — 다음 = 코어 알파테스트 트랙 (1단계: 구현 헌법 정합화)**
 
 ---
 
@@ -61,16 +61,32 @@
 ## 3. 현재 위치 (다음 세션은 여기부터)
 
 - **완료 (06-12)**:
-  1. **UI·대고객 계층 설계 확정**: `Olympus_Service_Layer.md` v1.0 신설 (5a07ad4) — 데이터 모델 11종(PostgreSQL)·인증/보안(argon2id·owner 2FA 필수·패스워드 복구)·코어 인터페이스 계약 4종·UI 3구획(콘솔 MVP ①~④/고객 포털 옵션 탭 패턴/Grafana)·tenant 이전 시나리오·해지 고지 3종·조인 전략(사본 후 조인)·결정 레지스터 D1~D9/A1~A3
-  2. **PRD 11·22절 갱신** (15c6ff2): Admin API 서비스 계층 연동 확장(tenant limits/deletion·usage·batch-jobs, **tenant CRUD 없음** — tenant SSOT는 서비스 계층) + 22절 Service_Layer 링크
-  3. (06-11~12 기완료) v6.13 설계 확정 / PRD 증류 / 사료화 / 핸드오프 테스트 통과
-- **다음 작업**: **CUE 지정 대기.** 후보:
-  - (a) 구현 헌법 정합화 (역할 B) — CLAUDE.md·SKILLS.md·AGENT.md·Olympus_Harness.md의 구 계약(라운드·poll·_source_url) 잔존분을 PRD v6.13에 일괄 정합 → 구현(G-A) 착수 전제
-  - (b) 상용 백로그 차순위 — 백업 주기·RPO/RTO·오프사이트 설계
+  1. **UI·대고객 계층 설계 확정**: `Olympus_Service_Layer.md` v1.0 신설 (5a07ad4)
+  2. **PRD 11·22절 갱신** (15c6ff2): Admin API 서비스 계층 연동 확장(tenant CRUD 없음 — tenant SSOT는 서비스 계층)
+  3. **고객 데이터 보안 검토 완료**: 인증·권한 계층 충분 / 유출 방어 계층 공백 7건 식별 → 아래 "보안 보강 설계 7건"으로 등재. **CUE 결정: 코어 알파테스트 우선, 보안 보강은 시스템 오픈 전 필수 해결(오픈 게이트)**
+  4. (06-11~12 기완료) v6.13 설계 확정 / PRD 증류 / 사료화 / 핸드오프 테스트 통과
+- **다음 작업**: **코어 알파테스트 트랙** (순서 고정)
+  1. **구현 헌법 정합화 (역할 B)** ← 여기부터 — CLAUDE.md·SKILLS.md·AGENT.md·Olympus_Harness.md의 구 계약(라운드·poll·_source_url·url 필드) 잔존분을 PRD v6.13에 일괄 정합
+  2. 게이트 구현 (Olympus_Plan.md G-A부터, 역할 A가 AGENT.md 절단 → C 구현)
+  3. 실연동 알파테스트 (mock 통과 ≠ 완료 — 실제 에이전트 왕복 검증)
 - **진행 중 미확정**: 없음.
 
+### 🔒 보안 보강 설계 7건 (오픈 게이트 — **시스템 오픈 전 필수 해결**, CUE 킵 06-12)
+
+| # | 항목 | 요지 |
+|---|------|------|
+| S1 | 저장 데이터 암호화(at-rest) | queue.db·audit.db·Raw 드롭의 대화 내용 평문 보관 해소. **최대 공백** |
+| S2 | totp_secret 암호화 저장 | 해시 불가(검증에 원문 필요) → 암호화 방식 규정 (Service_Layer) |
+| S3 | 백업 보안 | 백업 주기·RPO/RTO 설계와 묶음 — 백업본 암호화·접근통제 |
+| S4 | 내부 전송 TLS 명문화 | 외부 위치 에이전트→라우터 outbound / 라우터↔어댑터 구간 |
+| S5 | 유출 대응 플레이북 | PIPA 유출 통지 의무(인지 후 신고 기한) 대응 절차·연락 체계. 법규·약관 백로그와 연동 |
+| S6 | 결제 데이터 경계 명문화 | 카드 원정보 비보유·PG 토큰만 보관 → PCI-DSS 범위 축소 (Service_Layer payment.method 규정) |
+| S7 | Mem0·Obsidian 보안 책임 규정 | 고객 대화 파생 데이터가 들어가는 외부 저장소의 암호화·접근통제 책임 주체 명문화 |
+
+> 알파테스트(내부)는 이 7건 없이 진행 가능. **외부 사용자 데이터가 들어가는 시점(오픈) 전에는 미해결 상태로 진행 금지.**
+
 ### 상용 준비 항목 (설계 백로그 — CUE 승인된 권고)
-~~UI·대고객 데이터 모델~~(**완료 06-12** → Service_Layer v1.0) / 백업 주기·RPO/RTO·오프사이트 / 토큰 발급·로테이션 운영 정책 / 법규·약관(PIPA 등 — Service_Layer 9절 미결 4건 연동: usage 보존·고지 실패 정책·tenant 이전 양도 동의·DM 감사) / 고객 SLA 문서(실측 후) / 보안 점검·공개 API 인증 강화 / SDK 고객 문서 / 장애 공지·지원 프로세스. (PRD 22절 미결과 합산 관리)
+~~UI·대고객 데이터 모델~~(완료 06-12 → Service_Layer v1.0) / **보안 보강 7건(위 — 오픈 게이트)** / 백업 주기·RPO/RTO·오프사이트(S3와 묶음) / 토큰 발급·로테이션 운영 정책 / 법규·약관(PIPA 등 — S5 및 Service_Layer 9절 미결 연동) / 고객 SLA 문서(실측 후) / 공개 API 인증 강화 / SDK 고객 문서 / 장애 공지·지원 프로세스. (PRD 22절 미결과 합산 관리)
 
 ---
 
@@ -96,18 +112,18 @@ HANDOFF "현재 위치"(3절)에 적힌 항목부터 작업을 이어간다.
 
 - `Dev-CUE/olympus-router-v2` / `master` / MCP 읽기·쓰기 가능. 푸시 전 SHA 재조회 필수(전체 push 방식).
 - **현행 문서**: HANDOFF.md / Olympus_PRD.md / Olympus_Service_Layer.md / Olympus_Plan.md / Olympus_Session_Protocol.md
-- **구현 헌법(C용, 정합 대기)**: CLAUDE.md, SKILLS.md, AGENT.md, Olympus_Harness.md — ⚠️ 구 계약(라운드·poll·_source_url) 잔존. 구현 착수 직전 일괄 정합 예정. 충돌 시 PRD 우선.
+- **구현 헌법(C용, 정합 대기 — 다음 작업 1단계)**: CLAUDE.md, SKILLS.md, AGENT.md, Olympus_Harness.md — ⚠️ 구 계약(라운드·poll·_source_url) 잔존. 충돌 시 PRD 우선.
 - **아카이브**: Olympus_PRD_Plan.md, Olympus_Design_Ledger.md, AGENT_Phase1~7.md, AGENT_E2E.md, Olympus_Design_Handoff_New_Session.md, Olympus_Handoff_v610.md
 - **코드(~v6.4)**: server.js, hera-webhook-adapter.py, adapters/ config/ harness/ registry/ router-core/
 
 ### 주요 커밋 (최근)
 | commit | 내용 |
 |--------|------|
-| 15c6ff2 | **PRD 11절 Admin API 서비스 계층 확장 + 22절 링크** |
+| 76d9b2e | HANDOFF — Service_Layer v1.0 반영 |
+| 15c6ff2 | PRD 11절 Admin API 서비스 계층 확장 + 22절 링크 |
 | 5a07ad4 | **Olympus_Service_Layer.md v1.0 신설 — 대고객 계층·UI 설계** |
 | 4a83620 | Olympus_PRD.md 신설 — v6.13 증류본 (설계 SSOT) |
 | 382286f | Olympus_Plan.md 신설 — 의존성 게이트 G-A~G-J |
-| 1f784ea | README v6.13 정합 + 증류 이력 |
 
 ---
 
@@ -115,7 +131,8 @@ HANDOFF "현재 위치"(3절)에 적힌 항목부터 작업을 이어간다.
 
 - **라운드는 없다.** 구 문서·기억에 round/max_rounds/ROUND_LIMIT이 나오면 그건 폐기된 과거다. 발화 횟수(speaker_counts)만 존재.
 - **에이전트 제출값(caller·speaker_counts)은 무시된다.** 신원=토큰, 카운트=세션 DB.
-- **mock 통과 ≠ 완료.** 실연동(G-G) 전 완료 선언 금지.
+- **mock 통과 ≠ 완료.** 실연동 전 완료 선언 금지.
 - **"킵" = CUE 전용 승인어.** 에이전트 자칭 킵 완료 금지.
-- **tenant SSOT는 서비스 계층** — 코어에 tenant CRUD 없음(PRD 11절). 코어는 키 규칙(4.2)만. tenant_id는 시스템 생성 불투명 값(slug 금지 — Service_Layer 3절).
+- **tenant SSOT는 서비스 계층** — 코어에 tenant CRUD 없음(PRD 11절). tenant_id는 시스템 생성 불투명 값(slug 금지 — Service_Layer 3절).
+- **보안 보강 7건(S1~S7)은 오픈 게이트** — 알파테스트는 가능하나, 외부 사용자 데이터 수용(오픈) 전 미해결 진행 금지.
 - 설계 근거(채택/기각 사유)는 PRD·Service_Layer 각 절에 1줄씩 박혀 있다 — 같은 논의를 반복하거나 기각 대안(WS·롱폴링·JWT·node:sqlite·라운드·FDW 조인·slug tenant_id)을 다시 들고 오지 마라.
