@@ -20,7 +20,13 @@
 ### 설계 검토 중 발견한 주요 항목
 
 - PRD/Plan 방향은 좋다.
-- 구현 착수 전 `CLAUDE.md`, `SKILLS.md`, `AGENT.md`, `Olympus_Harness.md` 정합화가 필요하다.
+- `CLAUDE.md`, `AGENT.md`, `SKILLS.md`, `Olympus_Harness.md`는 v2용 현행 문서가 아니라 v1 산출물이므로, v2 PRD와 안 맞는 것이 정상이다.
+- 다음 작업은 v1 문서를 단순 정합화 patch하는 것이 아니라, 정리된 `Olympus_PRD.md` 기준으로 v2 하네스와 phase별 자기완결형 작업지시 체계를 새로 만드는 방향이다.
+- 하네스 파일은 Opus에게 생성 지시할 계획이다.
+- 코드 생성과 구현은 Codex가 phase 단위 agent 작업지시 파일을 생성/수행하는 방식으로 진행한다.
+- 각 phase는 코드 완성 → 테스트 통과 → 새 세션에서 다음 작업 시작 순서로 진행한다.
+- 이 룰의 핵심 조건은 각 phase/task handoff가 자기완결형이어야 한다는 점이다.
+- 새 세션으로 phase를 시작하는 이유는 v1 MVP 작업 경험상 이전 시행착오와 폐기된 맥락이 구현 에이전트 판단을 오염시키지 않아 더 클린한 코드가 나왔기 때문이다.
 - `중복 0` 표현과 `at-least-once 중복 가능` 표현은 범위 조정이 필요하다.
 - G-G 실연동은 G-B 직후 최소 실연동과 최종 통합 실연동으로 나누는 방안이 적합하다.
 - External A2A Gateway 요구가 추가되었다.
@@ -48,5 +54,6 @@
 1. Kevin과 `ATHENA/*` 기록 구조 확인
 2. “킵” 승인 후 GitHub push 여부 결정
 3. Project Map을 실제 함수 단위까지 확장
-4. 구현 헌법 정합화 task brief 작성
-5. Codex/Claude Code에 G0 정합화 작업 위임
+4. Opus용 v2 하네스 생성 브리핑 작성
+5. Codex용 phase별 자기완결형 작업지시 생성 브리핑 작성
+6. 각 phase/task handoff 자기완결성 체크리스트 작성

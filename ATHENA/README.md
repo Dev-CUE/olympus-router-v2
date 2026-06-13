@@ -27,6 +27,7 @@ Athena는 이 프로젝트에서 직접 코딩자가 아니라 다음 역할을 
 - `task-brief-template.md` — Codex/Claude Code/Antigravity 작업 지시서 템플릿
 - `review-gate-checklist.md` — Athena 검수 게이트
 - `change-record-template.md` — 변경점 기록 표준 템플릿
+- `self-contained-handoff-checklist.md` — 새 세션으로 phase/task를 넘기기 위한 자기완결성 체크리스트
 - `orchestration-log.md` — Athena 운영 기록과 의사결정 로그
 
 ## 기록 원칙
